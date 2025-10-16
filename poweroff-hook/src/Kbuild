@@ -1,0 +1,2 @@
+# Kbuild file for poweroff_hook kernel module
+obj-m := poweroff_hook.o

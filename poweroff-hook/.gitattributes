@@ -1,0 +1,8 @@
+*.c linguist-language=C
+*.h linguist-language=C
+*.sh linguist-language=Shell text eol=lf
+*.md linguist-documentation
+Makefile linguist-language=Makefile
+
+# Kernel headers are external dependency, don't count toward language stats
+kernel-headers/** linguist-vendored
