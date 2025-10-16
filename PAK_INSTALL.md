@@ -49,9 +49,10 @@ This creates `deploy/PowerOffHook.pak.zip` (~926 KB).
 
 1. Enable the module via the UI (or from the command line: `/mnt/SDCARD/Tools/tg5040/PowerOffHook.pak/bin/service-on`)
 2. Power off the device normally
-3. After reboot, check for the log file:
+3. After reboot, check for the log files:
    ```bash
-   cat /poweroff_log.txt
+   cat /mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook.txt
+   cat /mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log
    ```
    
 The log should contain entries like:
@@ -105,7 +106,7 @@ dmesg | grep poweroff
 ## Log File Locations
 
 The module attempts to write to these locations in order:
-1. `/mnt/SDCARD/.userdata/tg5040/logs/poweroff_log.txt` (the GUI app in Tools)
+1. `/mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook.txt` (the GUI app in Tools)
 2. `/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log` (the actual kernel hook)
 
 ## Troubleshooting

@@ -1,5 +1,7 @@
 # TrimUI Brick AXP2202 Clean Poweroff Module
 
+> **WARNING:** This is not production ready. Please do not install on on your Brick. Use at your own risk.
+
 A Linux kernel module for the TrimUI Brick that **prevents battery overheating** during shutdown by properly communicating with the AXP2202 Power Management IC.
 
 ## The Problem
@@ -33,7 +35,7 @@ This ensures **complete power disconnection** and prevents battery overheating.
 - ✅ **Battery overheating prevention** - The primary purpose
 - ✅ **Power-off only** - Does NOT trigger on reboot/restart (system needs power rails active for reboot)
 - ✅ **I2C communication** - Direct register writes to AXP2202 PMIC (I2C bus 6, address 0x34)
-- ✅ **Production-ready** - Thoroughly tested on real hardware
+- ✅ **Thoroughly tested on real hardware**
 - ✅ **Diagnostic logging** - Creates `/poweroff_log.txt` with timestamp for verification
 - ✅ **Clean implementation** - Uses kernel reboot notifier system with high priority
 - ✅ **Kernel 4.9 compatible** - Uses appropriate APIs for Linux 4.9.191
@@ -102,35 +104,153 @@ make build
 # Result: src/poweroff_hook.ko (215KB with debug symbols)
 ```
 
-## Installation Methods
+## Installation
 
-### Method 1: TrimUI Pak System (Recommended)
+### Prerequisites
+
+- TrimUI Brick device (tg5040 platform)
+- NextUI or compatible firmware
+- SD card with write access
+
+### 1. Build the Pak Package
+
+On your development machine:
 
 ```bash
-# Build deployment package
+# First time setup - download dependencies (only needed once)
+make setup-deps
+
+# Build the kernel module and create pak.zip
 make deploy
-
-# Copy to TrimUI SD card
-cp deploy/PowerOffHook.pak.zip /Volumes/SDCARD/Tools/tg5040/
-
-# On device: Navigate to Tools → PowerOffHook
-# Enable via UI and configure auto-start on boot
 ```
 
-See [PAK_INSTALL.md](PAK_INSTALL.md) for detailed pak installation instructions.
+This creates `deploy/PowerOffHook.pak.zip` (~926 KB).
 
-### Method 2: Direct SSH Deployment
+### 2. Install on TrimUI Brick
+
+1. Power off the device and remove the SD card
+
+2. Insert the SD card into your computer
+
+2. Copy the contents of `PowerOffHook.pak.zip` to your TrimUI Brick SD card:
+   - Location: `SDCARD/Tools/tg5040/PowerOffHook.pak`
+
+3. Eject SD card safely and insert into your TrimUI Brick
+
+4. Power on the device
+
+### 3. Configure via UI
+
+1. Navigate to **Tools** → **PowerOffHook**
+2. Launch the configuration interface
+3. Configure settings:
+   - **Enable**: Toggle to load/unload the kernel module
+   - **Start on boot**: Auto-load module when device boots
+
+### 4. Test the Module
+
+1. Enable the module via the UI (or from the command line: `/mnt/SDCARD/Tools/tg5040/PowerOffHook.pak/bin/service-on`)
+2. Power off the device normally
+3. After reboot, check for the log files:
+   ```bash
+   cat /mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook.txt
+   cat /mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log
+   ```
+   
+The log should contain entries like:
+```
+[2025-10-16 21:30:45] System power-off event detected
+```
+
+## Pak Structure
+
+The pak contains:
+
+```
+PowerOffHook.pak/
+├── bin/
+│   ├── on-boot           # Called at boot if "Start on boot" enabled
+│   ├── service-on        # Loads the kernel module (insmod)
+│   ├── service-off       # Unloads the kernel module (rmmod)
+│   ├── service-is-running # Check if module is loaded
+│   ├── poweroff_hook.ko  # The kernel module (244 KB)
+│   ├── jq                # JSON processor for settings UI
+│   ├── minui-list        # Settings UI component
+│   └── minui-presenter   # Message display component
+├── launch.sh             # Main UI launcher
+├── settings.json         # UI configuration
+├── pak.json              # Pak metadata
+├── README.md             # Full documentation
+└── LICENSE               # GPL-2.0 license
+```
+
+## Manual Control (SSH/Terminal)
+
+If you prefer command-line control:
 
 ```bash
-# Configure device IP (default: 192.168.0.156)
-# Edit Makefile if needed
+# Navigate to pak directory
+cd /mnt/SDCARD/Tools/tg5040/PowerOffHook.pak
 
-# Load module temporarily
-make deploy-load
+# Load module
+./bin/service-on
 
-# Or install permanently
-make deploy-install
+# Check status
+./bin/service-is-running && echo "Module loaded" || echo "Module not loaded"
+
+# Unload module
+./bin/service-off
+
+# View kernel logs
+dmesg | grep poweroff
 ```
+
+## Log File Locations
+
+The module attempts to write to these locations in order:
+1. `/mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook.txt` (the GUI app in Tools)
+2. `/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log` (the actual kernel hook)
+
+## Troubleshooting
+
+### Module won't load
+- Check kernel logs: `dmesg | tail -20`
+- Verify kernel version: `uname -r` (should be 4.9.191)
+- Ensure no conflicting modules are loaded
+
+
+### Log file not created
+- Check dmesg for error messages
+- Verify filesystem is writable
+- Module may not have permissions to write to chosen location
+
+## Uninstallation
+
+1. Via UI: Disable the module and "Start on boot"
+2. Delete the pak file from Tools directory
+3. Reboot device (optional)
+
+## Advanced Usage
+
+### Enable at Boot (Manual)
+
+Edit `/mnt/SDCARD/.userdata/tg5040/auto.sh` and add:
+
+```bash
+test -f "$SDCARD_PATH/Tools/tg5040/PowerOffHook.pak/bin/on-boot" && \
+  "$SDCARD_PATH/Tools/tg5040/PowerOffHook.pak/bin/on-boot"
+```
+
+### Build Custom Version
+
+Modify `src/poweroff_hook.c` and rebuild:
+
+```bash
+make clean
+make deploy
+```
+
+Copy the new pak.zip to your device.
 
 ## Testing
 

@@ -63,6 +63,9 @@ static const char *log_paths[] = {
 /* Global I2C adapter for AXP2202 communication */
 static struct i2c_adapter *i2c_adapter = NULL;
 
+/* Save original pm_power_off handler */
+static void (*original_pm_power_off)(void) = NULL;
+
 /*
  * I2C register write to AXP2202 PMIC
  * Returns 0 on success, negative error code on failure
@@ -310,22 +313,26 @@ static int write_load_log(void)
 /*
  * Reboot notifier callback
  * This is called when the system is shutting down or rebooting.
- * CRITICAL: Only responds to SYS_POWER_OFF, NOT SYS_RESTART or SYS_HALT.
- * This ensures the battery disconnect sequence only runs on actual poweroff,
- * not during reboots where the system needs to come back up.
+ * We now respond to both SYS_POWER_OFF and SYS_HALT since some embedded
+ * systems (like BusyBox/OpenWRT) may use HALT instead of POWER_OFF.
+ * We still ignore SYS_RESTART to avoid triggering on reboot.
  */
 static int poweroff_notifier_callback(struct notifier_block *nb, 
                                       unsigned long event, void *data)
 {
-    /* Only act on power-off, ignore reboot/halt/restart */
-    if (event != SYS_POWER_OFF) {
-        printk(KERN_DEBUG "poweroff_hook: Ignoring event %lu (not SYS_POWER_OFF)\n", 
+    /* Log all events for debugging */
+    printk(KERN_INFO "poweroff_hook: Reboot notifier called with event=%lu (POWER_OFF=%d, HALT=%d, RESTART=%d)\n",
+           event, SYS_POWER_OFF, SYS_HALT, SYS_RESTART);
+
+    /* Only act on power-off or halt, ignore reboot/restart */
+    if (event != SYS_POWER_OFF && event != SYS_HALT) {
+        printk(KERN_INFO "poweroff_hook: Ignoring event %lu (not POWER_OFF or HALT)\n", 
                event);
         return NOTIFY_DONE;
     }
 
     printk(KERN_INFO "poweroff_hook: ============================================\n");
-    printk(KERN_INFO "poweroff_hook: SYS_POWER_OFF event detected\n");
+    printk(KERN_INFO "poweroff_hook: Power-off/halt event detected (event=%lu)\n", event);
     printk(KERN_INFO "poweroff_hook: Initiating clean poweroff to prevent battery overheating\n");
     printk(KERN_INFO "poweroff_hook: ============================================\n");
 
@@ -348,6 +355,39 @@ static struct notifier_block poweroff_notifier = {
     .notifier_call = poweroff_notifier_callback,
     .priority = POWEROFF_HOOK_PRIORITY,
 };
+
+/*
+ * pm_power_off hook - called directly by kernel on poweroff
+ * This is the PRIMARY poweroff hook on embedded systems.
+ * The reboot notifier is a backup that may not be called on all platforms.
+ */
+static void axp2202_pm_power_off(void)
+{
+    printk(KERN_INFO "poweroff_hook: ============================================\n");
+    printk(KERN_INFO "poweroff_hook: pm_power_off() called - system shutting down\n");
+    printk(KERN_INFO "poweroff_hook: Initiating clean poweroff to prevent battery overheating\n");
+    printk(KERN_INFO "poweroff_hook: ============================================\n");
+
+    /* Execute AXP2202 PMIC clean poweroff sequence */
+    execute_axp2202_poweroff();
+
+    /* Write log file for debugging/verification */
+    try_write_log();
+
+    printk(KERN_INFO "poweroff_hook: Clean poweroff sequence completed\n");
+
+    /* Call original pm_power_off if it exists */
+    if (original_pm_power_off) {
+        printk(KERN_INFO "poweroff_hook: Calling original pm_power_off handler\n");
+        original_pm_power_off();
+    } else {
+        printk(KERN_INFO "poweroff_hook: No original pm_power_off handler, halting\n");
+        /* System will halt here */
+        while (1) {
+            cpu_relax();
+        }
+    }
+}
 
 /*
  * Module initialization
@@ -385,10 +425,20 @@ static int __init poweroff_hook_init(void)
 
     printk(KERN_INFO "poweroff_hook: Successfully registered power-off hook (priority %d)\n",
            POWEROFF_HOOK_PRIORITY);
-    printk(KERN_INFO "poweroff_hook: Will execute ONLY on SYS_POWER_OFF (not reboot)\n");
+    printk(KERN_INFO "poweroff_hook: Will execute on SYS_POWER_OFF or SYS_HALT (not SYS_RESTART)\n");
+    printk(KERN_INFO "poweroff_hook: SYS_POWER_OFF=%d, SYS_HALT=%d, SYS_RESTART=%d\n",
+           SYS_POWER_OFF, SYS_HALT, SYS_RESTART);
     printk(KERN_INFO "poweroff_hook: AXP2202 shutdown sequence will prevent battery overheating\n");
     printk(KERN_INFO "poweroff_hook: Log file will be written to %s (with fallbacks)\n", 
            log_paths[0]);
+
+    /* Hook pm_power_off for direct poweroff handling (primary method on embedded systems) */
+    printk(KERN_INFO "poweroff_hook: Hooking pm_power_off for direct poweroff handling\n");
+    original_pm_power_off = pm_power_off;
+    pm_power_off = axp2202_pm_power_off;
+    printk(KERN_INFO "poweroff_hook: pm_power_off hook installed (original=%p)\n", 
+           original_pm_power_off);
+
     printk(KERN_INFO "poweroff_hook: ============================================\n");
 
     /* Write load confirmation to log file for peace of mind */
@@ -404,6 +454,12 @@ static void __exit poweroff_hook_exit(void)
 {
     printk(KERN_INFO "poweroff_hook: ============================================\n");
     printk(KERN_INFO "poweroff_hook: Unloading AXP2202 clean poweroff module\n");
+
+    /* Restore original pm_power_off */
+    if (pm_power_off == axp2202_pm_power_off) {
+        pm_power_off = original_pm_power_off;
+        printk(KERN_INFO "poweroff_hook: pm_power_off hook removed\n");
+    }
 
     /* Unregister reboot notifier */
     unregister_reboot_notifier(&poweroff_notifier);
