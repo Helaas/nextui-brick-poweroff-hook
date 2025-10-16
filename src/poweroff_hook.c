@@ -54,8 +54,7 @@ MODULE_VERSION("1.0");
 
 /* File paths to try in order (primary + fallbacks) for logging */
 static const char *log_paths[] = {
-    "/poweroff_log.txt",
-    "/data/poweroff_log.txt",
+    "/mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook.txt",
     "/mnt/SDCARD/poweroff_log.txt",
     "/tmp/poweroff_log.txt",
     NULL
@@ -265,6 +264,50 @@ static int try_write_log(void)
 }
 
 /*
+ * Write module load confirmation to log file
+ */
+static int write_load_log(void)
+{
+    char message[512];
+    struct timespec ts;
+    struct tm tm;
+    int i, ret = -1;
+
+    /* Get current time */
+    getnstimeofday(&ts);
+    time_to_tm(ts.tv_sec, 0, &tm);
+
+    /* Format message */
+    snprintf(message, sizeof(message),
+             "TrimUI Brick AXP2202 Clean Poweroff Module - LOADED\n"
+             "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
+             "Status: Module successfully loaded and active\n"
+             "I2C Bus: %d, PMIC Address: 0x%02x\n"
+             "Priority: %d\n"
+             "Purpose: Prevent battery overheating on shutdown\n"
+             "Module: poweroff_hook v1.0\n"
+             "Note: Will execute ONLY on SYS_POWER_OFF (not reboot)\n",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min, tm.tm_sec,
+             I2C_BUS_NUMBER, AXP2202_I2C_ADDR, POWEROFF_HOOK_PRIORITY);
+
+    /* Try each path in order */
+    for (i = 0; log_paths[i] != NULL; i++) {
+        ret = write_log_file(log_paths[i], message, strlen(message));
+        if (ret == 0) {
+            printk(KERN_INFO "poweroff_hook: Successfully wrote load log to %s\n", 
+                   log_paths[i]);
+            return 0;
+        }
+        printk(KERN_DEBUG "poweroff_hook: Failed to write load log to %s (error %d)\n", 
+               log_paths[i], ret);
+    }
+
+    printk(KERN_WARNING "poweroff_hook: Failed to write load log to any path\n");
+    return ret;
+}
+
+/*
  * Reboot notifier callback
  * This is called when the system is shutting down or rebooting.
  * CRITICAL: Only responds to SYS_POWER_OFF, NOT SYS_RESTART or SYS_HALT.
@@ -294,8 +337,8 @@ static int poweroff_notifier_callback(struct notifier_block *nb,
 
     printk(KERN_INFO "poweroff_hook: Clean poweroff sequence completed\n");
 
-    /* Ensure filesystems are synced before final poweroff */
-    emergency_sync();
+    /* Note: emergency_sync() not available in this kernel, 
+     * but the kernel's shutdown path will handle syncing */
 
     return NOTIFY_DONE;
 }
@@ -347,6 +390,9 @@ static int __init poweroff_hook_init(void)
     printk(KERN_INFO "poweroff_hook: Log file will be written to %s (with fallbacks)\n", 
            log_paths[0]);
     printk(KERN_INFO "poweroff_hook: ============================================\n");
+
+    /* Write load confirmation to log file for peace of mind */
+    write_load_log();
 
     return 0;
 }

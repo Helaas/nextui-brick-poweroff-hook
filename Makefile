@@ -114,6 +114,7 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@cd $(SRC_DIR) && rm -f *.o *.ko *.mod.c *.mod *.order *.symvers .*.cmd
 	@cd $(SRC_DIR) && rm -rf .tmp_versions
+	@rm -f $(BIN_DIR)/$(MODULE_NAME).ko
 	@rm -f $(BIN_DIR)/jq $(BIN_DIR)/jq.LICENSE
 	@rm -f $(BIN_DIR)/minui-list $(BIN_DIR)/minui-presenter
 	@rm -rf $(DEPLOY_DIR)
@@ -130,6 +131,8 @@ distclean: clean
 deploy: build
 	@echo "Preparing deployment package..."
 	@mkdir -p $(DEPLOY_DIR)
+	@echo "Copying kernel module to bin directory..."
+	@cp $(MODULE_KO) $(BIN_DIR)/$(MODULE_NAME).ko
 	@echo "Downloading utilities..."
 	@curl -f -o $(BIN_DIR)/jq -sSL https://github.com/jqlang/jq/releases/download/jq-$(JQ_VERSION)/jq-$(ARCH)
 	@chmod +x $(BIN_DIR)/jq
@@ -142,7 +145,6 @@ deploy: build
 	@cd $(DEPLOY_DIR) && rm -f PowerOffHook.pak.zip
 	@zip -r $(DEPLOY_DIR)/PowerOffHook.pak.zip \
 		$(BIN_DIR)/ \
-		$(SRC_DIR)/$(MODULE_NAME).ko \
 		launch.sh \
 		settings.json \
 		pak.json \

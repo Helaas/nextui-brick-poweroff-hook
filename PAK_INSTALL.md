@@ -67,11 +67,10 @@ PowerOffHook.pak/
 │   ├── service-on        # Loads the kernel module (insmod)
 │   ├── service-off       # Unloads the kernel module (rmmod)
 │   ├── service-is-running # Check if module is loaded
+│   ├── poweroff_hook.ko  # The kernel module (244 KB)
 │   ├── jq                # JSON processor for settings UI
 │   ├── minui-list        # Settings UI component
 │   └── minui-presenter   # Message display component
-├── src/
-│   └── poweroff_hook.ko  # The kernel module (215 KB)
 ├── launch.sh             # Main UI launcher
 ├── settings.json         # UI configuration
 ├── pak.json              # Pak metadata

@@ -2,17 +2,35 @@
 PAK_DIR="$(dirname "$0")"
 PAK_NAME="$(basename "$PAK_DIR")"
 PAK_NAME="${PAK_NAME%.*}"
+
+# Set default LOGS_PATH if not provided by system
+if [ -z "$LOGS_PATH" ]; then
+    LOGS_PATH="/mnt/SDCARD/.userdata/tg5040/logs"
+fi
+
+# Ensure logs directory exists
+mkdir -p "$LOGS_PATH" 2>/dev/null || true
+
+# Enable debug tracing
 set -x
 
+# Redirect all output to log file
 rm -f "$LOGS_PATH/$PAK_NAME.txt"
-exec >>"$LOGS_PATH/$PAK_NAME.txt"
-exec 2>&1
+exec >>"$LOGS_PATH/$PAK_NAME.txt" 2>&1
 
 echo "$0" "$@"
 cd "$PAK_DIR" || exit 1
 
 MODULE_NAME="poweroff_hook"
 HUMAN_READABLE_NAME="Power-Off Hook"
+
+# Script paths
+BIN_DIR="$PAK_DIR/bin"
+
+# Utility paths
+JQ="$BIN_DIR/jq"
+MINUI_LIST="$BIN_DIR/minui-list"
+MINUI_PRESENTER="$BIN_DIR/minui-presenter"
 
 show_message() {
     message="$1"
@@ -22,12 +40,12 @@ show_message() {
         seconds="forever"
     fi
 
-    killall minui-presenter >/dev/null 2>&1 || true
+    killall "$MINUI_PRESENTER" >/dev/null 2>&1 || true
     echo "$message" 1>&2
     if [ "$seconds" = "forever" ]; then
-        minui-presenter --message "$message" --timeout -1 &
+        "$MINUI_PRESENTER" --message "$message" --timeout -1 &
     else
-        minui-presenter --message "$message" --timeout "$seconds"
+        "$MINUI_PRESENTER" --message "$message" --timeout "$seconds"
     fi
 }
 
@@ -86,14 +104,14 @@ current_settings() {
     minui_list_file="/tmp/${PAK_NAME}-settings.json"
     rm -f "$minui_list_file"
 
-    jq -rM '{settings: .settings}' "$PAK_DIR/settings.json" >"$minui_list_file"
+    "$JQ" -rM '{settings: .settings}' "$PAK_DIR/settings.json" >"$minui_list_file"
     if "$BIN_DIR/service-is-running"; then
-        jq '.settings[0].selected = 1' "$minui_list_file" >"$minui_list_file.tmp"
+        "$JQ" '.settings[0].selected = 1' "$minui_list_file" >"$minui_list_file.tmp"
         mv "$minui_list_file.tmp" "$minui_list_file"
     fi
 
     if will_start_on_boot; then
-        jq '.settings[1].selected = 1' "$minui_list_file" >"$minui_list_file.tmp"
+        "$JQ" '.settings[1].selected = 1' "$minui_list_file" >"$minui_list_file.tmp"
         mv "$minui_list_file.tmp" "$minui_list_file"
     fi
 
@@ -107,7 +125,7 @@ main_screen() {
 
     echo "$settings" >"$minui_list_file"
 
-    minui-list --disable-auto-sleep --file "$minui_list_file" --format json --title "$HUMAN_READABLE_NAME" --confirm-text "SAVE" --item-key "settings" --write-value state
+    "$MINUI_LIST" --disable-auto-sleep --file "$minui_list_file" --format json --title "$HUMAN_READABLE_NAME" --confirm-text "SAVE" --item-key "settings" --write-value state
 }
 
 cleanup() {
@@ -116,7 +134,7 @@ cleanup() {
     rm -f "/tmp/${PAK_NAME}-settings.json"
     rm -f "/tmp/${PAK_NAME}-minui-list.json"
     rm -f /tmp/stay_awake
-    killall minui-presenter >/dev/null 2>&1 || true
+    killall "$(basename "$MINUI_PRESENTER")" >/dev/null 2>&1 || true
 }
 
 main() {
@@ -134,28 +152,23 @@ main() {
         return 1
     fi
 
-    if ! command -v minui-list >/dev/null 2>&1; then
+    if [ ! -f "$MINUI_LIST" ]; then
         show_message "minui-list not found" 2
         return 1
     fi
 
-    if ! command -v minui-presenter >/dev/null 2>&1; then
+    if [ ! -f "$MINUI_PRESENTER" ]; then
         show_message "minui-presenter not found" 2
         return 1
     fi
 
-    if ! command -v jq >/dev/null 2>&1; then
+    if [ ! -f "$JQ" ]; then
         show_message "jq not found" 2
         return 1
     fi
 
-    chmod +x "$PAK_DIR/bin/on-boot"
-    chmod +x "$PAK_DIR/bin/service-on"
-    chmod +x "$PAK_DIR/bin/service-off"
-    chmod +x "$PAK_DIR/bin/service-is-running"
-    chmod +x "$PAK_DIR/bin/jq" 2>/dev/null || true
-    chmod +x "$PAK_DIR/bin/minui-list" 2>/dev/null || true
-    chmod +x "$PAK_DIR/bin/minui-presenter" 2>/dev/null || true
+    # Make all scripts and utilities executable
+    chmod +x "$PAK_DIR/bin/"* 2>/dev/null || true
 
     while true; do
         settings="$(current_settings)"
@@ -169,11 +182,11 @@ main() {
         echo "$settings" >"/tmp/${PAK_NAME}-old-settings.json"
         echo "$new_settings" >"/tmp/${PAK_NAME}-new-settings.json"
 
-        old_enabled="$(jq -rM '.settings[0].selected' "/tmp/${PAK_NAME}-old-settings.json")"
-        enabled="$(jq -rM '.settings[0].selected' "/tmp/${PAK_NAME}-new-settings.json")"
+        old_enabled="$("$JQ" -rM '.settings[0].selected' "/tmp/${PAK_NAME}-old-settings.json")"
+        enabled="$("$JQ" -rM '.settings[0].selected' "/tmp/${PAK_NAME}-new-settings.json")"
 
-        old_start_on_boot="$(jq -rM '.settings[1].selected' "/tmp/${PAK_NAME}-old-settings.json")"
-        start_on_boot="$(jq -rM '.settings[1].selected' "/tmp/${PAK_NAME}-new-settings.json")"
+        old_start_on_boot="$("$JQ" -rM '.settings[1].selected' "/tmp/${PAK_NAME}-old-settings.json")"
+        start_on_boot="$("$JQ" -rM '.settings[1].selected' "/tmp/${PAK_NAME}-new-settings.json")"
 
         if [ "$old_enabled" != "$enabled" ]; then
             if [ "$enabled" = "1" ]; then
@@ -187,7 +200,7 @@ main() {
                 if ! wait_for_service 5; then
                     show_message "Failed to verify $HUMAN_READABLE_NAME" 2
                 fi
-                killall minui-presenter >/dev/null 2>&1 || true
+                killall "$(basename "$MINUI_PRESENTER")" >/dev/null 2>&1 || true
             else
                 show_message "Unloading $HUMAN_READABLE_NAME module" 2
                 if ! "$BIN_DIR/service-off"; then

@@ -3,19 +3,26 @@ BIN_DIR="$(dirname "$0")"
 PAK_DIR="$(dirname "$BIN_DIR")"
 PAK_NAME="$(basename "$PAK_DIR")"
 PAK_NAME="${PAK_NAME%.*}"
+
+# Enable debug output
 set -x
 
+echo "=== service-on starting ==="
 echo "$0" "$@"
 cd "$PAK_DIR" || exit 1
 
 MODULE_NAME="poweroff_hook"
-MODULE_PATH="$PAK_DIR/src/poweroff_hook.ko"
+MODULE_PATH="$PAK_DIR/bin/poweroff_hook.ko"
 
 main() {
+    echo "Checking for module at: $MODULE_PATH"
     if [ ! -f "$MODULE_PATH" ]; then
-        echo "Error: Module not found at $MODULE_PATH"
+        echo "ERROR: Module not found at $MODULE_PATH"
+        ls -lh "$PAK_DIR/bin/" || true
         return 1
     fi
+    
+    echo "Module file found, size: $(ls -lh "$MODULE_PATH" | awk '{print $5}')"
     
     # Check if module is already loaded
     if lsmod | grep -q "^$MODULE_NAME "; then
@@ -24,13 +31,20 @@ main() {
     fi
     
     # Load the kernel module
-    insmod "$MODULE_PATH"
+    echo "Attempting to load module: insmod $MODULE_PATH"
+    insmod "$MODULE_PATH" 2>&1
+    ret=$?
     
-    if [ $? -eq 0 ]; then
-        echo "Module $MODULE_NAME loaded successfully"
+    if [ $ret -eq 0 ]; then
+        echo "SUCCESS: Module $MODULE_NAME loaded (exit code: 0)"
+        lsmod | grep "$MODULE_NAME" || true
         return 0
     else
-        echo "Failed to load module $MODULE_NAME"
+        echo "ERROR: Failed to load module $MODULE_NAME (exit code: $ret)"
+        echo "Module path: $MODULE_PATH"
+        echo "===== Last 20 kernel messages ====="
+        dmesg | tail -20
+        echo "===== End kernel messages ====="
         return 1
     fi
 }

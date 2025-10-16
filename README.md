@@ -217,13 +217,14 @@ Each step includes appropriate delays (`msleep`) and error checking.
 ```
 .
 ├── src/
-│   ├── poweroff_hook.c          # Main kernel module (300+ lines)
+│   ├── poweroff_hook.c          # Main kernel module (330+ lines)
 │   └── Kbuild                    # Kernel build configuration
 ├── bin/
 │   ├── on-boot                   # Auto-start script (pak system)
 │   ├── service-on                # Load module (insmod)
 │   ├── service-off               # Unload module (rmmod)
-│   └── service-is-running        # Check module status
+│   ├── service-is-running        # Check module status
+│   └── poweroff_hook.ko          # Compiled module (copied during 'make deploy')
 ├── deploy/
 │   └── PowerOffHook.pak.zip      # TrimUI pak package (created by 'make deploy')
 ├── kernel-headers/               # Linux 4.9 headers (downloaded)
