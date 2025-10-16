@@ -26,13 +26,16 @@ This creates `deploy/PowerOffHook.pak.zip` (~926 KB).
 
 ### 2. Install on TrimUI Brick
 
-1. Copy `PowerOffHook.pak.zip` to your TrimUI Brick SD card:
-   - Location: `/mnt/SDCARD/Tools/tg5040/PowerOffHook.pak.zip`
-   - Or place in any tools directory that NextUI scans
+1. Power off the device and remove the SD card
 
-2. Eject SD card safely and insert into your TrimUI Brick
+2. Insert the SD card into your computer
 
-3. Power on the device
+2. Copy the contents of `PowerOffHook.pak.zip` to your TrimUI Brick SD card:
+   - Location: `SDCARD/Tools/tg5040/PowerOffHook.pak`
+
+3. Eject SD card safely and insert into your TrimUI Brick
+
+4. Power on the device
 
 ### 3. Configure via UI
 
@@ -102,10 +105,8 @@ dmesg | grep poweroff
 ## Log File Locations
 
 The module attempts to write to these locations in order:
-1. `/poweroff_log.txt` (preferred)
-2. `/data/poweroff_log.txt`
-3. `/mnt/SDCARD/poweroff_log.txt`
-4. `/tmp/poweroff_log.txt` (fallback)
+1. `/mnt/SDCARD/.userdata/tg5040/logs/poweroff_log.txt` (the GUI app in Tools)
+2. `/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log` (the actual kernel hook)
 
 ## Troubleshooting
 
@@ -114,10 +115,6 @@ The module attempts to write to these locations in order:
 - Verify kernel version: `uname -r` (should be 4.9.191)
 - Ensure no conflicting modules are loaded
 
-### UI doesn't show up
-- Verify NextUI version supports pak format
-- Check pak.json platform matches your device (tg5040)
-- Ensure all scripts are executable: `chmod +x bin/*`
 
 ### Log file not created
 - Check dmesg for error messages
@@ -155,5 +152,3 @@ Copy the new pak.zip to your device.
 ## See Also
 
 - [README.md](README.md) - Full project documentation
-- [QUICKSTART.md](QUICKSTART.md) - Developer quick start guide
-- [SUCCESS.md](SUCCESS.md) - Project completion notes

@@ -54,9 +54,9 @@ MODULE_VERSION("1.0");
 
 /* File paths to try in order (primary + fallbacks) for logging */
 static const char *log_paths[] = {
-    "/mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook.txt",
-    "/mnt/SDCARD/poweroff_log.txt",
-    "/tmp/poweroff_log.txt",
+    "/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log",
+    "/mnt/SDCARD/poweroff_hook.log",
+    "/tmp/poweroff_hook.log",
     NULL
 };
 
