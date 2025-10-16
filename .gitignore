@@ -1,2 +1,50 @@
-/.DS_Store
-/todelete
+# Build artifacts
+*.o
+*.ko
+*.mod.c
+*.mod
+*.order
+*.symvers
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+
+# Kernel headers (too large for git - download separately)
+kernel-headers/
+
+# Toolchain (too large for git - download separately)
+toolchain/
+gcc-linaro-*.tar.xz
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+tmp/
+
+# Archives
+*.tar.gz
+*.tar.xz
+*.zip
+
+# Python cache
+__pycache__/
+*.py[cod]
