@@ -1,0 +1,13 @@
+{
+  "name": "PowerOffHook",
+  "type": "TOOL",
+  "description": "Kernel module that logs system power-off events",
+  "author": "helaas",
+  "repo_url": "https://github.com/Helaas/nextui-brick-poweroff-hook",
+  "release_filename": ".pak.zip",
+  "platforms": [
+    "tg5040"
+  ],
+  "launch": "launch.sh",
+  "version": "1.0.0"
+}

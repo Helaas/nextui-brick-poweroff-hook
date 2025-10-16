@@ -1,0 +1,38 @@
+#!/bin/sh
+BIN_DIR="$(dirname "$0")"
+PAK_DIR="$(dirname "$BIN_DIR")"
+PAK_NAME="$(basename "$PAK_DIR")"
+PAK_NAME="${PAK_NAME%.*}"
+set -x
+
+echo "$0" "$@"
+cd "$PAK_DIR" || exit 1
+
+MODULE_NAME="poweroff_hook"
+MODULE_PATH="$PAK_DIR/src/poweroff_hook.ko"
+
+main() {
+    if [ ! -f "$MODULE_PATH" ]; then
+        echo "Error: Module not found at $MODULE_PATH"
+        return 1
+    fi
+    
+    # Check if module is already loaded
+    if lsmod | grep -q "^$MODULE_NAME "; then
+        echo "Module $MODULE_NAME is already loaded"
+        return 0
+    fi
+    
+    # Load the kernel module
+    insmod "$MODULE_PATH"
+    
+    if [ $? -eq 0 ]; then
+        echo "Module $MODULE_NAME loaded successfully"
+        return 0
+    else
+        echo "Failed to load module $MODULE_NAME"
+        return 1
+    fi
+}
+
+main "$@"

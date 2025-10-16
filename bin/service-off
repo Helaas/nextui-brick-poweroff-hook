@@ -1,0 +1,32 @@
+#!/bin/sh
+BIN_DIR="$(dirname "$0")"
+PAK_DIR="$(dirname "$BIN_DIR")"
+PAK_NAME="$(basename "$PAK_DIR")"
+PAK_NAME="${PAK_NAME%.*}"
+set -x
+
+echo "$0" "$@"
+cd "$PAK_DIR" || exit 1
+
+MODULE_NAME="poweroff_hook"
+
+main() {
+    # Check if module is loaded
+    if ! lsmod | grep -q "^$MODULE_NAME "; then
+        echo "Module $MODULE_NAME is not loaded"
+        return 0
+    fi
+    
+    # Unload the kernel module
+    rmmod "$MODULE_NAME"
+    
+    if [ $? -eq 0 ]; then
+        echo "Module $MODULE_NAME unloaded successfully"
+        return 0
+    else
+        echo "Failed to unload module $MODULE_NAME"
+        return 1
+    fi
+}
+
+main "$@"

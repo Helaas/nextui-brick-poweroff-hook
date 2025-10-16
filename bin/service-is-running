@@ -1,0 +1,19 @@
+#!/bin/sh
+BIN_DIR="$(dirname "$0")"
+PAK_DIR="$(dirname "$BIN_DIR")"
+PAK_NAME="$(basename "$PAK_DIR")"
+PAK_NAME="${PAK_NAME%.*}"
+set -x
+
+MODULE_NAME="poweroff_hook"
+
+main() {
+    # Check if module is loaded using lsmod
+    if lsmod | grep -q "^$MODULE_NAME "; then
+        return 0
+    fi
+    
+    return 1
+}
+
+main "$@"

@@ -17,6 +17,15 @@ kernel-headers/
 toolchain/
 gcc-linaro-*.tar.xz
 
+# Deployment utilities (downloaded during 'make deploy')
+bin/jq
+bin/jq.LICENSE
+bin/minui-list
+bin/minui-presenter
+
+# Deployment directory
+deploy/
+
 # IDE
 .vscode/
 .idea/

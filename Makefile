@@ -1,15 +1,27 @@
 # Makefile for TrimUI Brick Power-Off Hook Kernel Module
 # This Makefile builds a kernel module using Docker cross-compilation
 
-.PHONY: all build clean docker-build docker-shell help deploy-copy deploy-load deploy-unload deploy-test
+.PHONY: all build clean docker-build docker-shell help deploy-copy deploy-load deploy-unload deploy-test deploy setup-deps setup-toolchain setup-headers distclean
 
 # Project configuration
 PROJECT_NAME := poweroff-hook
 MODULE_NAME := poweroff_hook
 DOCKER_IMAGE := trimui-brick-gcc74
 SRC_DIR := src
+BIN_DIR := bin
 DEPLOY_DIR := deploy
-KERNEL_HEADERS := kernel-headers/linux-4.9
+KERNEL_HEADERS_DIR := kernel-headers
+KERNEL_HEADERS := $(KERNEL_HEADERS_DIR)/linux-4.9
+TOOLCHAIN_DIR := toolchain
+TOOLCHAIN_URL := https://releases.linaro.org/components/toolchain/binaries/7.4-2019.02/aarch64-linux-gnu/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz
+TOOLCHAIN_FILE := $(TOOLCHAIN_DIR)/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz
+
+# Utility versions for pak
+JQ_VERSION := 1.7.1
+MINUI_LIST_VERSION := 0.11.4
+MINUI_PRESENTER_VERSION := 0.7.0
+ARCH := linux-arm64
+DEVICE := tg5040
 
 # Device configuration
 DEVICE_IP := 192.168.0.156
@@ -24,8 +36,36 @@ MODULE_KO := $(SRC_DIR)/$(MODULE_NAME).ko
 # Default target
 all: build
 
+# Setup all dependencies (toolchain + headers)
+setup-deps: setup-toolchain setup-headers
+	@echo "All dependencies set up successfully!"
+
+# Download and extract GCC toolchain
+setup-toolchain:
+	@if [ -d "$(TOOLCHAIN_DIR)/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu" ]; then \
+		echo "Toolchain already exists at $(TOOLCHAIN_DIR)"; \
+	else \
+		echo "Downloading Linaro GCC 7.4.1 toolchain..."; \
+		mkdir -p $(TOOLCHAIN_DIR); \
+		curl -L -o $(TOOLCHAIN_FILE) $(TOOLCHAIN_URL); \
+		echo "Extracting toolchain..."; \
+		cd $(TOOLCHAIN_DIR) && tar xf gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz; \
+		echo "Toolchain setup complete!"; \
+	fi
+
+# Download and configure kernel headers
+setup-headers:
+	@if [ -d "$(KERNEL_HEADERS)" ]; then \
+		echo "Kernel headers already configured at $(KERNEL_HEADERS)"; \
+	else \
+		echo "Setting up kernel headers..."; \
+		./download_kernel_headers.sh; \
+		./configure_kernel_headers.sh; \
+		echo "Kernel headers setup complete!"; \
+	fi
+
 # Build the kernel module using Docker and kernel build system
-build:
+build: docker-build check-headers
 	docker run --rm \
 		-v "$(PWD):/work" \
 		-w /work \
@@ -74,7 +114,43 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@cd $(SRC_DIR) && rm -f *.o *.ko *.mod.c *.mod *.order *.symvers .*.cmd
 	@cd $(SRC_DIR) && rm -rf .tmp_versions
+	@rm -f $(BIN_DIR)/jq $(BIN_DIR)/jq.LICENSE
+	@rm -f $(BIN_DIR)/minui-list $(BIN_DIR)/minui-presenter
+	@rm -rf $(DEPLOY_DIR)
 	@echo "Clean complete."
+
+# Full clean including dependencies
+distclean: clean
+	@echo "Cleaning all dependencies..."
+	@rm -rf $(KERNEL_HEADERS_DIR)
+	@rm -rf $(TOOLCHAIN_DIR)
+	@echo "Full clean complete."
+
+# Deploy target - build, download utilities, and create pak zip
+deploy: build
+	@echo "Preparing deployment package..."
+	@mkdir -p $(DEPLOY_DIR)
+	@echo "Downloading utilities..."
+	@curl -f -o $(BIN_DIR)/jq -sSL https://github.com/jqlang/jq/releases/download/jq-$(JQ_VERSION)/jq-$(ARCH)
+	@chmod +x $(BIN_DIR)/jq
+	@curl -sSL -o $(BIN_DIR)/jq.LICENSE "https://raw.githubusercontent.com/jqlang/jq/refs/tags/jq-$(JQ_VERSION)/COPYING"
+	@curl -f -o $(BIN_DIR)/minui-list -sSL https://github.com/josegonzalez/minui-list/releases/download/$(MINUI_LIST_VERSION)/minui-list-$(DEVICE)
+	@chmod +x $(BIN_DIR)/minui-list
+	@curl -f -o $(BIN_DIR)/minui-presenter -sSL https://github.com/josegonzalez/minui-presenter/releases/download/$(MINUI_PRESENTER_VERSION)/minui-presenter-$(DEVICE)
+	@chmod +x $(BIN_DIR)/minui-presenter
+	@echo "Creating PowerOffHook.pak.zip..."
+	@cd $(DEPLOY_DIR) && rm -f PowerOffHook.pak.zip
+	@zip -r $(DEPLOY_DIR)/PowerOffHook.pak.zip \
+		$(BIN_DIR)/ \
+		$(SRC_DIR)/$(MODULE_NAME).ko \
+		launch.sh \
+		settings.json \
+		pak.json \
+		README.md \
+		LICENSE \
+		-x "$(BIN_DIR)/.DS_Store"
+	@echo "Deployment package created: $(DEPLOY_DIR)/PowerOffHook.pak.zip"
+	@ls -lh $(DEPLOY_DIR)/PowerOffHook.pak.zip
 
 # Deployment targets (require sshpass or manual password entry)
 
@@ -143,10 +219,17 @@ help:
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
+	@echo "Setup Targets:"
+	@echo "  setup-deps     - Download and configure all dependencies (toolchain + headers)"
+	@echo "  setup-toolchain - Download Linaro GCC 7.4.1 toolchain"
+	@echo "  setup-headers  - Download and configure kernel headers"
+	@echo ""
 	@echo "Build Targets:"
 	@echo "  all            - Build the kernel module (default)"
 	@echo "  build          - Build the kernel module using Docker"
+	@echo "  deploy         - Build and create PowerOffHook.pak.zip package"
 	@echo "  clean          - Remove build artifacts"
+	@echo "  distclean      - Remove build artifacts and dependencies"
 	@echo "  docker-build   - Build/check Docker cross-compilation image"
 	@echo "  docker-shell   - Open interactive Docker shell"
 	@echo ""
@@ -156,6 +239,11 @@ help:
 	@echo "  deploy-unload  - Unload module (rmmod)"
 	@echo "  deploy-test    - Load module, wait for user, then unload"
 	@echo "  deploy-install - Install module to $(DEVICE_MODULE_DIR)"
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  1. make setup-deps  # Download toolchain and kernel headers (first time only)"
+	@echo "  2. make build       # Build the kernel module"
+	@echo "  3. make deploy      # Create pak.zip for TrimUI installation"
 	@echo ""
 	@echo "Testing:"
 	@echo "  1. make deploy-load     # Load module"
