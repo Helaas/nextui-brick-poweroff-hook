@@ -1,7 +1,7 @@
 {
   "name": "PowerOffHook",
   "type": "TOOL",
-  "description": "Kernel module that logs system power-off events",
+  "description": "Prevents battery overheating on shutdown via AXP2202 PMIC clean poweroff",
   "author": "helaas",
   "repo_url": "https://github.com/Helaas/nextui-brick-poweroff-hook",
   "release_filename": ".pak.zip",

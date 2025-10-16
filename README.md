@@ -1,1107 +1,471 @@
-# TrimUI Brick Power-Off Hook# TrimUI Brick Power-Off Hook# TrimUI Brick Power-Off Hook Kernel Module
+# TrimUI Brick AXP2202 Clean Poweroff Module
 
+A Linux kernel module for the TrimUI Brick that **prevents battery overheating** during shutdown by properly communicating with the AXP2202 Power Management IC.
 
+## The Problem
 
-A Linux kernel module for the TrimUI Brick handheld gaming device that executes custom code during system power-off events (not reboots).
+When the TrimUI Brick powers off using the default shutdown sequence, the AXP2202 PMIC (Power Management Integrated Circuit) does not completely disconnect all power rails. This causes:
 
+- **Battery overheating** during and after shutdown
+- Incomplete power rail disconnection
+- Potential battery damage from prolonged current draw
+- Unsafe thermal conditions
 
+## The Solution
 
-## FeaturesA Linux kernel module for the TrimUI Brick handheld gaming device that executes custom code during system power-off events (not reboots).A Linux kernel module for TrimUI Brick that **runs only on system power-off** (not reboot) and creates a log file at `/poweroff_log.txt` as proof of concept.
+This kernel module hooks into the Linux kernel's power-off event (`SYS_POWER_OFF` **only** - not reboot) and executes a specific 10-step sequence of I2C register writes to the AXP2202 PMIC that:
 
+1. Disables all interrupts and interrupt status flags
+2. Disables all wake sources
+3. **Disconnects the battery** (critical for preventing overheating)
+4. Disables coulomb counter (battery fuel gauge)
+5. Disables backup battery charging
+6. Enables all shutdown sources
+7. Configures POK (Power OK) for immediate shutdown
+8. Triggers PMIC poweroff command
+9. Disables all DC-DC converters
+10. Disables all LDO (Low-Dropout) regulators
 
+This ensures **complete power disconnection** and prevents battery overheating.
 
-- ✅ **Power-off detection only** - Distinguishes between power-off and reboot
+## Features
 
-- ✅ **Proof-of-concept logging** - Creates `/poweroff_log.txt` with timestamp on power-off
-
-- ✅ **Multiple fallback paths** - Tries `/poweroff_log.txt` → `/data/` → `/mnt/SDCARD/` → `/tmp/`## Features## Overview
-
+- ✅ **Battery overheating prevention** - The primary purpose
+- ✅ **Power-off only** - Does NOT trigger on reboot/restart (system needs power rails active for reboot)
+- ✅ **I2C communication** - Direct register writes to AXP2202 PMIC (I2C bus 6, address 0x34)
 - ✅ **Production-ready** - Thoroughly tested on real hardware
-
-- ✅ **Clean implementation** - Uses kernel's reboot notifier system
-
-
-
-## Use Cases- ✅ **Power-off detection only** - Distinguishes between power-off and rebootThis kernel module:
-
-
-
-This module serves as a foundation for:- ✅ **Proof-of-concept logging** - Creates `/poweroff_log.txt` with timestamp on power-off- ✅ Registers a reboot notifier that responds **only to `SYS_POWER_OFF` events**
-
-- Saving state before power-off
-
-- Logging power-off events- ✅ **Multiple fallback paths** - Tries `/poweroff_log.txt` → `/data/` → `/mnt/SDCARD/` → `/tmp/`- ✅ Ignores reboot, halt, and restart events
-
-- Triggering cleanup tasks
-
-- Syncing data to persistent storage- ✅ **Production-ready** - Thoroughly tested on real hardware- ✅ Writes a timestamped log file before power is cut
-
-- Custom power management hooks
-
-- ✅ **Clean implementation** - Uses kernel's reboot notifier system- ✅ Attempts multiple filesystem paths (with fallback strategy)
+- ✅ **Diagnostic logging** - Creates `/poweroff_log.txt` with timestamp for verification
+- ✅ **Clean implementation** - Uses kernel reboot notifier system with high priority
+- ✅ **Kernel 4.9 compatible** - Uses appropriate APIs for Linux 4.9.191
 
 ## Hardware Requirements
 
-- ✅ Uses kernel 4.9 compatible file I/O APIs
-
 - **Device:** TrimUI Brick
-
-- **SoC:** Allwinner A133 (ARM64/aarch64)## Use Cases- ✅ Provides detailed dmesg logging for troubleshooting
-
+- **SoC:** Allwinner A133 (ARM64/aarch64)
+- **PMIC:** AXP2202 on I2C bus 6 at address 0x34
 - **Kernel:** Linux 4.9.191
+- **Architecture:** 64-bit ARMv8-A
 
-- **Architecture:** 64-bit ARMv8-A- ✅ Cross-compiles from macOS via Docker
+## Development Requirements
 
+### Development Machine (macOS)
 
+- Docker Desktop installed and running
+- Make utility (comes with Xcode Command Line Tools)
+- SSH client (built-in)
+- Optional: `sshpass` for automated deployment (`brew install sshpass`)
+- ~150MB disk space for toolchain
+- ~500MB disk space for kernel headers
 
-## Quick StartThis module serves as a foundation for:
+### Target Device (TrimUI Brick)
 
+- Kernel: 4.9.191 (aarch64)
+- Root access via SSH (user: root, password: tina)
+- I2C subsystem enabled with AXP2202 support
 
+## Quick Start
 
-### Prerequisites- Saving state before power-off## Requirements
+### Option 1: Automated Setup
 
+```bash
+# Download all dependencies (toolchain + kernel headers)
+make setup-deps
 
+# Build the kernel module
+make build
 
-- Docker (for cross-compilation)- Logging power-off events
-
-- SSH access to TrimUI Brick device (default: `root@192.168.0.156`, password: `tina`)
-
-- ~150MB disk space for toolchain download- Triggering cleanup tasks### Development Machine (macOS)
-
-
-
-### 1. Clone Repository- Syncing data to persistent storage- Docker Desktop installed and running
-
-
-
-```bash- Custom power management hooks- Make utility (comes with Xcode Command Line Tools)
-
-git clone https://github.com/yourusername/nextui-brick-poweroff-hook.git
-
-cd nextui-brick-poweroff-hook- SSH client (built-in)
-
+# Create deployment package for TrimUI
+make deploy
 ```
 
-## Hardware Requirements- Optional: `sshpass` for automated deployment (`brew install sshpass`)
+Result: `deploy/PowerOffHook.pak.zip` ready for installation
 
-### 2. Download Toolchain
-
-
+### Option 2: Manual Steps
 
 ```bash
+# 1. Clone repository
+git clone https://github.com/Helaas/nextui-brick-poweroff-hook.git
+cd nextui-brick-poweroff-hook
 
-mkdir -p toolchain- **Device:** TrimUI Brick### Target Device (TrimUI Brick)
+# 2. Download GCC toolchain (Linaro GCC 7.4.1)
+make setup-toolchain
 
-cd toolchain
+# 3. Download and configure kernel headers
+make setup-headers
 
-curl -L -O http://releases.linaro.org/components/toolchain/binaries/7.4-2019.02/aarch64-linux-gnu/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz- **SoC:** Allwinner A133 (ARM64/aarch64)- Kernel: 4.9.191 (aarch64)
-
-cd ..
-
-```- **Kernel:** Linux 4.9.191- Root access via SSH (user: root, password: tina)
-
-
-
-### 3. Build Docker Image- **Architecture:** 64-bit ARMv8-A- IP address: 192.168.0.156
-
-
-
-```bash
-
+# 4. Build Docker image
 make docker-build
 
-```## Quick Start## Project Structure
+# 5. Build the module
+make build
 
-
-
-This sets up the Linaro GCC 7.4.1 toolchain (exact match for device kernel).
-
-
-
-### 4. Download Kernel Headers### Prerequisites```
-
-
-
-```bashpoweroff-hook/
-
-./download_kernel_headers.sh
-
-```- Docker (for cross-compilation)├── Makefile              # Cross-compilation build system
-
-
-
-Downloads Linux 4.9 kernel source and configures with device settings.- SSH access to TrimUI Brick device (default: `root@192.168.0.156`, password: `tina`)├── README.md             # This file
-
-
-
-### 5. Build Module- ~150MB disk space for toolchain download├── src/
-
-
-
-```bash│   ├── poweroff_hook.c   # Kernel module source code
-
-make
-
-```### 1. Clone and Setup│   └── Kbuild            # Kernel build configuration
-
-
-
-Output: `src/poweroff_hook.ko` (215KB with debug symbols)└── deploy/
-
-
-
-### 6. Deploy to Device```bash    └── deploy.sh         # Deployment and testing script
-
-
-
-```bashgit clone https://github.com/yourusername/nextui-brick-poweroff-hook.git```
-
-# Copy and load module
-
-cat src/poweroff_hook.ko | ssh root@192.168.0.156 "cat > /tmp/poweroff_hook.ko && insmod /tmp/poweroff_hook.ko"cd nextui-brick-poweroff-hook
-
-
-
-# Verify it's loaded```## Quick Start
-
-ssh root@192.168.0.156 "lsmod | grep poweroff"
-
+# Result: src/poweroff_hook.ko (215KB with debug symbols)
 ```
 
+## Installation Methods
 
-
-Expected output:### 2. Download Toolchain### 1. Setup
-
-```
-
-poweroff_hook           3397  0
-
-```
-
-```bashClone or extract this project and ensure the Docker toolchain is available:
-
-### 7. Test Power-Off Hook
-
-mkdir -p toolchain
+### Method 1: TrimUI Pak System (Recommended)
 
 ```bash
+# Build deployment package
+make deploy
 
-# Trigger power-offcd toolchain```bash
+# Copy to TrimUI SD card
+cp deploy/PowerOffHook.pak.zip /Volumes/SDCARD/Tools/tg5040/
 
-ssh root@192.168.0.156 "poweroff"
-
-curl -L -O http://releases.linaro.org/components/toolchain/binaries/7.4-2019.02/aarch64-linux-gnu/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xzcd /Users/kevinvranken/GitHub/limbo
-
-# After device powers back on, check the log
-
-ssh root@192.168.0.156 "cat /poweroff_log.txt"cd ..ls nextui-poweroff-daemon-pak/  # Should exist with docker/ subdirectory
-
+# On device: Navigate to Tools → PowerOffHook
+# Enable via UI and configure auto-start on boot
 ```
 
-```cd poweroff-hook
+See [PAK_INSTALL.md](PAK_INSTALL.md) for detailed pak installation instructions.
 
-Expected content:
+### Method 2: Direct SSH Deployment
 
-``````
+```bash
+# Configure device IP (default: 192.168.0.156)
+# Edit Makefile if needed
 
-Power-off detected at: 2025-10-16 20:45:32 UTC
+# Load module temporarily
+make deploy-load
 
-System: TrimUI Brick, Kernel: 4.9.191### 3. Build Docker Image
-
-Module: poweroff_hook v1.0
-
-This log confirms the power-off hook executed successfully.### 2. Build
-
+# Or install permanently
+make deploy-install
 ```
 
-```bash
-
-## Building
-
-make docker-buildBuild the kernel module using Docker cross-compilation:
-
-### Build Commands
-
-```
+## Testing
 
 ```bash
-
-make              # Build module```bash
-
-make clean        # Clean build artifacts
-
-make docker-build # Build Docker image with toolchainThis downloads and sets up the Linaro GCC 7.4.1 toolchain (matches device kernel).make build
-
-make docker-shell # Open shell in Docker container
-
-``````
-
-
-
-### Build Output### 4. Download Kernel Headers
-
-
-
-- **Module:** `src/poweroff_hook.ko`This will:
-
-- **Size:** 215KB (with debug symbols), ~3.4KB loaded in memory
-
-- **Format:** ELF 64-bit LSB relocatable, ARM aarch64```bash- Build/check the Docker image with the ARM64 cross-compiler
-
-
-
-## Deployment./download_kernel_headers.sh- Compile `poweroff_hook.c` into `poweroff_hook.ko`
-
-
-
-### Temporary Testing```- Display the module file size
-
-
-
-```bash
-
 # Load module
+make deploy-load
 
-ssh root@192.168.0.156 "insmod /tmp/poweroff_hook.ko"Downloads Linux 4.9 kernel source and configures with device settings.Expected output:
+# SSH into device
+ssh root@192.168.0.156
 
+# Check module is loaded
+lsmod | grep poweroff_hook
 
+# Check kernel messages
+dmesg | grep poweroff_hook
 
-# Unload module```
+# You should see:
+# poweroff_hook: I2C adapter 6 acquired for AXP2202 (addr 0x34)
+# poweroff_hook: Will execute ONLY on SYS_POWER_OFF (not reboot)
 
-ssh root@192.168.0.156 "rmmod poweroff_hook"
+# Test poweroff
+poweroff
 
-```### 5. Build ModuleBuilding kernel module poweroff_hook.ko for TrimUI Brick...
+# After reboot, verify log was created
+cat /poweroff_log.txt
+```
 
+Expected log content:
+```
+TrimUI Brick AXP2202 Clean Poweroff
+Timestamp: 2025-10-16 21:45:30 UTC
+Event: SYS_POWER_OFF
+Action: Executed AXP2202 PMIC shutdown sequence
+Purpose: Prevent battery overheating via complete power disconnection
+Module: poweroff_hook v1.0
+```
 
+## How It Works
 
-### Permanent InstallationTarget kernel: 4.9.191
+### 1. Module Initialization
 
+When the module loads (`insmod poweroff_hook.ko`):
 
+- Acquires I2C adapter for bus 6 (AXP2202 PMIC)
+- Registers a reboot notifier with priority 200 (high priority, runs early)
+- Prints diagnostic information to kernel log
 
-```bash```bash...
+### 2. Power-Off Event Detection
 
-# Install to system modules directory
+When the user triggers shutdown:
 
-make deploy-installmakeBuild successful: src/poweroff_hook.ko
+- Kernel's reboot notifier chain is called
+- Module checks event type
+- **If `SYS_POWER_OFF`**: Execute AXP2202 poweroff sequence
+- **If `SYS_RESTART` or `SYS_HALT`**: Do nothing (skip for reboots)
 
+### 3. AXP2202 Poweroff Sequence
 
+10-step register write sequence via I2C:
 
-# Auto-load at boot (optional)```-rw-r--r-- 1 user staff 12345 Oct 15 23:00 src/poweroff_hook.ko
+```
+Step 1: Disable all IRQs (0x40-0x47 = 0x00)
+Step 2: Clear IRQ status (0x48-0x4F = 0xFF)
+Step 3: Disable wake sources (0x26, 0x27 = 0x00)
+Step 4: Battery disconnect (0x28 = 0x00) ← CRITICAL for overheating prevention
+Step 5: Disable coulomb counter (0xB8 = 0x00)
+Step 6: Disable backup battery (0x35 = 0x00)
+Step 7: Enable shutdown sources (0x22 = 0xFF)
+Step 8: Configure immediate shutdown (0x23, 0x24 = 0x00)
+Step 9: Trigger poweroff (0x10 = 0x01)
+Step 10: Disable power rails (0x80-0x92 = 0x00)
+```
 
-ssh root@192.168.0.156 "echo 'poweroff_hook' >> /etc/modules"
+Each step includes appropriate delays (`msleep`) and error checking.
 
-``````
+### 4. Final Steps
 
+- Write diagnostic log to `/poweroff_log.txt`
+- Sync all filesystems (`emergency_sync()`)
+- Return control to kernel shutdown sequence
 
+## Project Structure
 
-### Using Makefile TargetsOutput: `src/poweroff_hook.ko` (215KB with debug symbols)
-
-
-
-```bash### 3. Deploy and Test
-
-make deploy-copy    # Copy to device /tmp/
-
-make deploy-load    # Copy and load module### 6. Deploy to Device
-
-make deploy-unload  # Unload module
-
-make deploy-test    # Interactive test session#### Option A: Using the deployment script (recommended)
-
-make deploy-install # Permanent installation
-
-``````bash
-
-
-
-## Development# Copy and load module```bash
-
-
-
-### Project Structurecat src/poweroff_hook.ko | ssh root@192.168.0.156 "cat > /tmp/poweroff_hook.ko && insmod /tmp/poweroff_hook.ko"cd deploy
-
-
-
-```./deploy.sh test
-
+```
 .
-
-├── src/# Verify it's loaded```
-
-│   ├── poweroff_hook.c      # Main kernel module source
-
-│   └── Kbuild               # Kernel build configurationssh root@192.168.0.156 "lsmod | grep poweroff"
-
+├── src/
+│   ├── poweroff_hook.c          # Main kernel module (300+ lines)
+│   └── Kbuild                    # Kernel build configuration
+├── bin/
+│   ├── on-boot                   # Auto-start script (pak system)
+│   ├── service-on                # Load module (insmod)
+│   ├── service-off               # Unload module (rmmod)
+│   └── service-is-running        # Check module status
 ├── deploy/
-
-│   └── deploy.sh            # Deployment automation script```This will:
-
-├── Dockerfile               # Docker image with GCC 7.4 toolchain
-
-├── Makefile                 # Build system1. Copy the module to the device
-
-├── download_kernel_headers.sh  # Kernel headers setup
-
-├── configure_kernel_headers.sh # Device config extractionExpected output:2. Load it with `insmod`
-
-├── README.md                # This file
-
-├── SUCCESS.md               # Technical success report```3. Show kernel messages
-
-└── QUICKSTART.md            # Quick reference guide
-
-poweroff_hook           3397  04. Wait for you to test power-off
-
-Generated (gitignored):
-
-├── kernel-headers/          # Linux 4.9.191 kernel source```5. Prompt to unload
-
-├── toolchain/               # Linaro GCC 7.4.1 toolchain
-
-└── src/*.o, src/*.ko        # Build artifacts
-
+│   └── PowerOffHook.pak.zip      # TrimUI pak package (created by 'make deploy')
+├── kernel-headers/               # Linux 4.9 headers (downloaded)
+├── toolchain/                    # Linaro GCC 7.4.1 (downloaded)
+├── Dockerfile                    # Cross-compilation environment
+├── Makefile                      # Build system
+├── launch.sh                     # Pak UI launcher
+├── pak.json                      # Pak metadata
+├── settings.json                 # Pak UI settings
+├── README.md                     # This file
+├── PAK_INSTALL.md                # Pak installation guide
+├── QUICKSTART.md                 # Developer quick start
+└── LICENSE                       # GPL-2.0 license
 ```
 
-### 7. Test Power-Off Hook#### Option B: Using Makefile targets
+## Makefile Targets
 
-### Modifying the Hook
-
-
-
-Edit `src/poweroff_hook.c` to implement your custom power-off logic:
-
-```bash```bash
-
-```c
-
-static int poweroff_notifier_callback(struct notifier_block *nb,# Trigger power-off# Load module on device
-
-                                     unsigned long event, void *unused)
-
-{ssh root@192.168.0.156 "poweroff"make deploy-load
-
-    if (event == SYS_POWER_OFF) {
-
-        // Your custom code here
-
-        // This runs BEFORE the device powers off
-
-        # After device powers back on, check the log# Check status
-
-        pr_info("poweroff_hook: System powering off...\n");
-
-        ssh root@192.168.0.156 "cat /poweroff_log.txt"ssh root@192.168.0.156
-
-        // Current implementation writes a log file
-
-        // You can replace this with your own logic```lsmod | grep poweroff_hook
-
-    }
-
-    
-
-    return NOTIFY_DONE;
-
-}Expected content:# Unload module
-
+### Setup Targets
+```bash
+make setup-deps      # Download toolchain + kernel headers (first time only)
+make setup-toolchain # Download Linaro GCC 7.4.1 (111 MB)
+make setup-headers   # Download & configure Linux 4.9 headers
 ```
 
-```make deploy-unload
-
-After modifying:
-
-```bashPower-off detected at: 2025-10-16 20:45:32 UTC```
-
-make clean && make
-
-# Then redeploy to deviceSystem: TrimUI Brick, Kernel: 4.9.191
-
+### Build Targets
+```bash
+make build           # Build kernel module (default)
+make deploy          # Build + create PowerOffHook.pak.zip
+make clean           # Remove build artifacts
+make distclean       # Remove build artifacts + dependencies
+make docker-build    # Build/check Docker image
+make docker-shell    # Open interactive Docker shell
 ```
 
-Module: poweroff_hook v1.0### 4. Validate Power-Off Hook
+### Deployment Targets
+```bash
+make deploy-copy     # Copy module to device /tmp/
+make deploy-load     # Copy + load module (insmod)
+make deploy-unload   # Unload module (rmmod)
+make deploy-test     # Load, wait for user, unload
+make deploy-install  # Install to /lib/modules/4.9.191/
+```
+
+### Help
+```bash
+make help            # Show all available targets
+```
 
 ## Technical Details
 
-This log confirms the power-off hook executed successfully.
+### Kernel Module Details
 
-### Why GCC 7.4.1?
+- **Name:** `poweroff_hook`
+- **File:** `src/poweroff_hook.ko`
+- **Size:** 215 KB (with debug symbols), ~3.4 KB loaded
+- **License:** GPL v2
+- **Dependencies:** I2C subsystem, kernel 4.9 APIs
 
-```**Important**: The hook only runs on power-off, not reboot!
+### Compilation Flags
 
-The TrimUI Brick kernel was compiled with GCC 7.4.1:
-
+```bash
+-fno-stack-protector    # Disable stack protection (kernel module)
+-march=armv8-a          # ARMv8-A architecture
+-mtune=cortex-a53       # Optimize for Cortex-A53 cores
 ```
 
-Linux version 4.9.191 (TRIMUIDEV@nuc) 
+### GCC Toolchain
 
-(gcc version 7.4.1 (OpenWrt/Linaro GCC 7.4-2019.02 2019-02))## Building#### Test Steps:
+**Critical:** Must use GCC 7.4.1 (exact match for TrimUI Brick kernel)
 
+- **Version:** Linaro GCC 7.4.1-2019.02
+- **Target:** aarch64-linux-gnu
+- **Size:** 111 MB (compressed)
+- **Why:** Kernel modules must use same GCC major version as the kernel
+
+Using a different GCC version (e.g., 8.x) causes segmentation faults on module load due to ABI incompatibility.
+
+### I2C Communication
+
+```c
+// I2C message structure for AXP2202
+struct i2c_msg msg = {
+    .addr = 0x34,        // AXP2202 I2C address
+    .flags = 0,          // Write operation
+    .len = 2,            // Register + value
+    .buf = {reg, value}  // Data to write
+};
+
+// Transfer via I2C bus 6
+i2c_transfer(i2c_adapter, &msg, 1);
 ```
 
+### AXP2202 PMIC Registers
 
+Key registers used in poweroff sequence:
 
-**ABI Compatibility:** Kernel modules must be compiled with the same GCC major version as the kernel to avoid segmentation faults and system instability.
-
-### Build Commands1. **Load the module** (if not already loaded):
-
-### Kernel APIs Used
-
-   ```bash
-
-- `register_reboot_notifier()` / `unregister_reboot_notifier()` - Hook into power-off events
-
-- `filp_open()` / `filp_close()` - File operations```bash   ./deploy/deploy.sh load
-
-- `vfs_write()` - Write to filesystem from kernel space
-
-- `vfs_fsync()` - Sync data to diskmake              # Build module   ```
-
-- `set_fs()` / `get_fs()` - Kernel/user space addressing (4.9 API)
-
-make clean        # Clean build artifacts
-
-### Compiler Flags
-
-make docker-build # Build Docker image with toolchain2. **Trigger power-off** (choose one method):
-
-- `-fno-stack-protector` - Disable stack protection (not available in kernel)
-
-- `-march=armv8-a` - Target ARMv8-A architecturemake docker-shell # Open shell in Docker container   - From device UI: Navigate to power options → Power Off
-
-- `-mtune=cortex-a53` - Optimize for Cortex-A53 cores
-
-```   - Via SSH: `ssh root@192.168.0.156 "poweroff"`
+| Register | Name | Purpose |
+|----------|------|---------|
+| 0x10 | Power Control | Trigger shutdown |
+| 0x22 | Shutdown Enable | Enable shutdown sources |
+| 0x23-0x24 | POK Configuration | Power OK timing |
+| 0x26-0x27 | Wake Enable | Wake source control |
+| 0x28 | Battery Control | **Battery disconnect** |
+| 0x35 | Backup Battery | Backup battery control |
+| 0x40-0x47 | IRQ Enable | Interrupt enables |
+| 0x48-0x4F | IRQ Status | Interrupt status |
+| 0x80-0x92 | Power Rails | DC-DC and LDO control |
+| 0xB8 | Coulomb Counter | Fuel gauge control |
 
 ## Troubleshooting
 
-
-
 ### Module won't load
 
-### Build Output3. **Wait for device to power off completely** (not reboot)
-
 ```bash
-
 # Check kernel messages
+dmesg | tail -20
 
-ssh root@192.168.0.156 "dmesg | tail -20"
+# Common issues:
+# - I2C adapter not found: Check I2C subsystem is enabled
+# - Segmentation fault: Wrong GCC version (must be 7.4.1)
+```
 
-- **Module:** `src/poweroff_hook.ko`4. **Power on the device** and check for the log file:
-
-# Verify module format
-
-file src/poweroff_hook.ko- **Size:** 215KB (with debug symbols), ~3.4KB loaded in memory   ```bash
-
-# Should show: ELF 64-bit LSB relocatable, ARM aarch64
-
-```- **Format:** ELF 64-bit LSB relocatable, ARM aarch64   ssh root@192.168.0.156
-
-
-
-### Segmentation fault on load   cat /poweroff_log.txt
-
-
-
-This means GCC version mismatch. Ensure you're using the Linaro GCC 7.4.1 toolchain, not a different version.## Deployment   ```
-
-
-
-### Module loads but hook doesn't trigger
-
-
-
-```bash### Temporary TestingExpected log content:
-
-# Check if module is loaded
-
-ssh root@192.168.0.156 "lsmod | grep poweroff"```
-
-
-
-# Check registration message```bashTrimUI Brick Power-Off Hook
-
-ssh root@192.168.0.156 "dmesg | grep 'Successfully registered'"
-
-# Load moduleTimestamp: 2025-10-15 23:15:42 UTC
-
-# Ensure you're using poweroff, not reboot
-
-ssh root@192.168.0.156 "poweroff"  # ✅ Will trigger hookssh root@192.168.0.156 "insmod /tmp/poweroff_hook.ko"Event: SYS_POWER_OFF
-
-ssh root@192.168.0.156 "reboot"    # ❌ Will NOT trigger hook
-
-```Module: poweroff_hook v1.0
-
-
-
-### File not created# Unload module```
-
-
-
-Check fallback paths:ssh root@192.168.0.156 "rmmod poweroff_hook"
+### Module loads but poweroff still causes overheating
 
 ```bash
+# Check module is actually loaded
+lsmod | grep poweroff_hook
 
-ssh root@192.168.0.156 "ls -la /poweroff_log.txt /data/poweroff_log.txt /mnt/SDCARD/poweroff_log.txt /tmp/poweroff_log.txt"```#### Alternative: Check fallback locations
+# Check notifier was registered
+dmesg | grep "registered power-off hook"
 
+# Verify I2C communication works
+dmesg | grep "I2C adapter 6 acquired"
+
+# Test module actually triggers
+# Power off and check dmesg on next boot
+dmesg | grep "SYS_POWER_OFF event detected"
 ```
 
-
-
-The module tries multiple locations and uses the first writable path.
-
-### Permanent InstallationIf root filesystem is read-only, check these paths:
-
-## Performance
+### Build failures
 
 ```bash
-
-- **Load time:** <100ms
-
-- **Memory overhead:** ~3.4KB in kernel space```bashssh root@192.168.0.156 "cat /data/poweroff_log.txt"
-
-- **Runtime overhead:** Negligible (only executes on power-off)
-
-- **Disk usage:** 215KB (module file with debug symbols)# Install to system modules directoryssh root@192.168.0.156 "cat /mnt/SDCARD/poweroff_log.txt"
-
-
-
-## Safetymake deploy-installssh root@192.168.0.156 "cat /tmp/poweroff_log.txt"
-
-
-
-- ✅ **No file modifications** - Only creates new log file```
-
-- ✅ **Clean unload** - Properly unregisters all hooks
-
-- ✅ **Tested thoroughly** - Load/unload cycles verified# Auto-load at boot (optional)
-
-- ✅ **Non-intrusive** - Doesn't modify existing system files
-
-- ⚠️ **Kernel code** - Exercise caution when modifyingssh root@192.168.0.156 "echo 'poweroff_hook' >> /etc/modules"#### View kernel messages:
-
-
-
-## License``````bash
-
-
-
-GPL v2 (to comply with Linux kernel licensing)ssh root@192.168.0.156 "dmesg | grep poweroff_hook"
-
-
-
-## Contributing### Using Makefile Targets```
-
-
-
-Contributions welcome! Please:
-
-
-
-1. Test thoroughly on real hardware```bashExpected messages:
-
-2. Follow kernel coding style
-
-3. Document any changesmake deploy-copy    # Copy to device /tmp/```
-
-4. Submit pull requests with clear descriptions
-
-make deploy-load    # Copy and load module[12345.678] poweroff_hook: Initializing power-off hook module
-
-## Resources
-
-make deploy-unload  # Unload module[12345.679] poweroff_hook: Successfully registered power-off hook
-
-- [Cross-compiling Guide](https://roc-streaming.org/toolkit/docs/portability/cross_compiling.html) - Toolchain information
-
-- [Linaro Toolchains](http://releases.linaro.org/components/toolchain/binaries/) - GCC downloadsmake deploy-test    # Interactive test session[23456.789] poweroff_hook: SYS_POWER_OFF event detected
-
-- [Linux Kernel Module Programming](https://sysprog21.github.io/lkmpg/) - Module development guide
-
-- [Reboot Notifier API](https://www.kernel.org/doc/html/latest/core-api/notifier.html) - Kernel notification chainsmake deploy-install # Permanent installation[23456.790] poweroff_hook: Successfully wrote log to /poweroff_log.txt
-
-
-
-## Acknowledgments```[23456.791] poweroff_hook: Power-off hook completed
-
-
-
-- Linaro for maintaining ARM toolchains```
-
-- TrimUI community for device information
-
-- Roc Streaming project for cross-compilation documentation## Development
-
-
-
-## Support## Makefile Targets
-
-
-
-For issues, questions, or contributions:### Project Structure
-
-- Open an issue on GitHub
-
-- Check `SUCCESS.md` for technical details### Build Targets
-
-- See `QUICKSTART.md` for quick reference
-
-```- `make build` - Build the kernel module (default)
-
----
-
-.- `make clean` - Remove build artifacts
-
-**Status:** ✅ Production Ready  
-
-**Last Updated:** October 16, 2025  ├── src/- `make docker-build` - Build/check Docker image
-
-**Tested On:** TrimUI Brick, Linux 4.9.191
-
-│   ├── poweroff_hook.c      # Main kernel module source- `make docker-shell` - Open interactive Docker shell for debugging
-
-│   └── Kbuild               # Kernel build configuration
-
-├── deploy/### Deployment Targets
-
-│   └── deploy.sh            # Deployment automation script- `make deploy-copy` - Copy module to device `/tmp/`
-
-├── Dockerfile               # Docker image with GCC 7.4 toolchain- `make deploy-load` - Copy and load module (`insmod`)
-
-├── Makefile                 # Build system- `make deploy-unload` - Unload module (`rmmod`)
-
-├── download_kernel_headers.sh  # Kernel headers setup- `make deploy-test` - Interactive test (load, wait, unload)
-
-├── configure_kernel_headers.sh # Device config extraction- `make deploy-install` - Install to `/lib/modules/4.9.191/`
-
-├── README.md                # This file
-
-├── SUCCESS.md               # Technical success report### Help
-
-└── QUICKSTART.md           # Quick reference guide- `make help` - Show all available targets
-
-
-
-Generated (gitignored):## Deployment Script Usage
-
-├── kernel-headers/          # Linux 4.9.191 kernel source
-
-├── toolchain/               # Linaro GCC 7.4.1 toolchainThe `deploy/deploy.sh` script provides convenient deployment commands:
-
-└── src/*.o, src/*.ko        # Build artifacts
-
-``````bash
-
-cd deploy
-
-### Modifying the Hook
-
-# Copy module to device
-
-Edit `src/poweroff_hook.c` to implement your custom power-off logic:./deploy.sh copy
-
-
-
-```c# Load module
-
-static int poweroff_notifier_callback(struct notifier_block *nb,./deploy.sh load
-
-                                     unsigned long event, void *unused)
-
-{# Check status
-
-    if (event == SYS_POWER_OFF) {./deploy.sh status
-
-        // Your custom code here
-
-        // This runs BEFORE the device powers off# Interactive test
-
-        ./deploy.sh test
-
-        pr_info("poweroff_hook: System powering off...\n");
-
-        # Check log files
-
-        // Current implementation writes a log file./deploy.sh logs
-
-        // You can replace this with your own logic
-
-    }# Unload module
-
-    ./deploy.sh unload
-
-    return NOTIFY_DONE;
-
-}# Install permanently
-
-```./deploy.sh install
-
+# Clean everything and rebuild
+make distclean
+make setup-deps
+make build
+
+# Check Docker is running
+docker ps
+
+# Verify toolchain downloaded
+ls -lh toolchain/
+
+# Verify kernel headers configured
+ls -lh kernel-headers/linux-4.9/.config
 ```
 
-After modifying:
+## Safety Notes
 
-```bash## Technical Details
+⚠️ **IMPORTANT:** This module modifies PMIC behavior. While thoroughly tested, use at your own risk.
 
-make clean && make
+- ✅ **Safe:** Module only activates on actual poweroff (not reboot)
+- ✅ **Safe:** Uses well-tested register sequence from userspace daemon
+- ✅ **Safe:** Does not affect normal operation or reboot functionality
+- ⚠️ **Caution:** If I2C communication fails, poweroff proceeds normally (safe fallback)
+- ⚠️ **Caution:** Unloading module disables battery overheating prevention
 
-# Then redeploy to device### How It Works
+## Why Not Use a Daemon?
 
-```
+Previous implementations used a userspace daemon (`poweroff_daemon.c`) that monitored for shutdown signals. The kernel module approach is superior because:
 
-1. **Module Registration**: On `insmod`, the module registers a reboot notifier with the kernel
+1. **Earlier execution** - Runs before userspace is shut down
+2. **More reliable** - Guaranteed to execute on every poweroff
+3. **No dependencies** - Doesn't require init system integration
+4. **Cleaner** - Uses kernel's official reboot notifier API
+5. **No processes** - Zero runtime overhead (only active during poweroff)
 
-## Technical Details2. **Event Filtering**: The notifier callback checks the event type and only acts on `SYS_POWER_OFF`
-
-3. **File Writing**: When power-off is detected, the module:
-
-### Why GCC 7.4.1?   - Gets the current timestamp
-
-   - Attempts to write a log file to `/poweroff_log.txt`
-
-The TrimUI Brick kernel was compiled with GCC 7.4.1:   - Falls back to `/data/`, `/mnt/SDCARD/`, or `/tmp/` if write fails
-
-```   - Emits kernel log messages for troubleshooting
-
-Linux version 4.9.191 (TRIMUIDEV@nuc) 4. **Cleanup**: The notifier runs before final power-off, ensuring the log is written
-
-(gcc version 7.4.1 (OpenWrt/Linaro GCC 7.4-2019.02 2019-02))
-
-```### Kernel Compatibility
-
-
-
-**ABI Compatibility:** Kernel modules must be compiled with the same GCC major version as the kernel to avoid segmentation faults and system instability.- **Target Kernel**: 4.9.191 (Tina Linux, Allwinner A133)
-
-- **Architecture**: aarch64 (ARM64)
-
-### Kernel APIs Used- **File I/O**: Uses `set_fs()`/`get_fs()` (removed in kernel 5.10+)
-
-- **APIs Used**:
-
-- `register_reboot_notifier()` / `unregister_reboot_notifier()` - Hook into power-off events  - `register_reboot_notifier()` / `unregister_reboot_notifier()`
-
-- `filp_open()` / `filp_close()` - File operations  - `filp_open()`, `kernel_write()`, `vfs_fsync()`, `filp_close()`
-
-- `vfs_write()` - Write to filesystem from kernel space  - `getnstimeofday()`, `time_to_tm()`
-
-- `vfs_fsync()` - Sync data to disk
-
-- `set_fs()` / `get_fs()` - Kernel/user space addressing (4.9 API)### Filesystem Strategy
-
-
-
-### Compiler FlagsThe module tries paths in order:
-
-1. `/poweroff_log.txt` (primary - requires writable root)
-
-- `-fno-stack-protector` - Disable stack protection (not available in kernel)2. `/data/poweroff_log.txt` (typical data partition)
-
-- `-march=armv8-a` - Target ARMv8-A architecture3. `/mnt/SDCARD/poweroff_log.txt` (SD card, usually writable)
-
-- `-mtune=cortex-a53` - Optimize for Cortex-A53 cores4. `/tmp/poweroff_log.txt` (tmpfs, always writable but volatile)
-
-
-
-## Troubleshooting**Note**: Based on device testing, `/` appears to be writable, so the primary path should work.
-
-
-
-### Module won't load### Why This Approach?
-
-
-
-```bash✅ **No system file modifications**: Pure kernel module, no init scripts or rc.d changes  
-
-# Check kernel messages✅ **Kernel-space solution**: No dependency on user-space daemons  
-
-ssh root@192.168.0.156 "dmesg | tail -20"✅ **Power-off specific**: Differentiates power-off from reboot using `SYS_POWER_OFF`  
-
-✅ **Reliable timing**: Reboot notifier runs at high priority before power is cut  
-
-# Verify module format✅ **Robust**: Fallback paths handle read-only filesystems  
-
-file src/poweroff_hook.ko
-
-# Should show: ELF 64-bit LSB relocatable, ARM aarch64## Troubleshooting
-
-```
-
-### Build Issues
-
-### Segmentation fault on load
-
-**Problem**: Docker image not found
-
-This means GCC version mismatch. Ensure you're using the Linaro GCC 7.4.1 toolchain, not a different version.```
-
-Solution: make docker-build
-
-### Module loads but hook doesn't trigger```
-
-
-
-```bash**Problem**: "Makefile:XX: *** missing separator"
-
-# Check if module is loaded```
-
-ssh root@192.168.0.156 "lsmod | grep poweroff"Ensure tabs (not spaces) are used in Makefile rules
-
-```
-
-# Check registration message
-
-ssh root@192.168.0.156 "dmesg | grep 'Successfully registered'"**Problem**: Module build fails with compiler errors
+## Development Workflow
 
 ```bash
+# 1. Make changes to src/poweroff_hook.c
 
-# Ensure you're using poweroff, not reboot# Check Docker toolchain
+# 2. Rebuild
+make clean && make build
 
-ssh root@192.168.0.156 "poweroff"  # ✅ Will trigger hookmake docker-shell
+# 3. Test on device
+make deploy-load
 
-ssh root@192.168.0.156 "reboot"    # ❌ Will NOT trigger hooksource /root/setup-env.sh
+# 4. Power off to test
+ssh root@192.168.0.156 "poweroff"
 
-```echo $CROSS_COMPILE
+# 5. Reboot device, check log
+ssh root@192.168.0.156 "cat /poweroff_log.txt"
 
-# Should show: /opt/aarch64-linux-gnu/bin/aarch64-linux-gnu-
-
-### File not created```
-
-
-
-Check fallback paths:### Deployment Issues
-
-```bash
-
-ssh root@192.168.0.156 "ls -la /poweroff_log.txt /data/poweroff_log.txt /mnt/SDCARD/poweroff_log.txt /tmp/poweroff_log.txt"**Problem**: SSH password prompts every time
-
-``````bash
-
-# Install sshpass
-
-The module tries multiple locations and uses the first writable path.brew install sshpass
-
+# 6. Check kernel messages
+ssh root@192.168.0.156 "dmesg | grep poweroff_hook"
 ```
 
-## Performance
+## Contributing
 
-**Problem**: "insmod: can't insert 'poweroff_hook.ko': invalid module format"
+This is a working, tested solution for TrimUI Brick battery overheating. Contributions welcome:
 
-- **Load time:** <100ms```bash
-
-- **Memory overhead:** ~3.4KB in kernel space# Check module architecture
-
-- **Runtime overhead:** Negligible (only executes on power-off)file src/poweroff_hook.ko
-
-- **Disk usage:** 215KB (module file with debug symbols)# Should show: ELF 64-bit LSB relocatable, ARM aarch64
-
-
-
-## Safety# Check kernel version match
-
-ssh root@192.168.0.156 "uname -r"
-
-- ✅ **No file modifications** - Only creates new log file# Should show: 4.9.191
-
-- ✅ **Clean unload** - Properly unregisters all hooks```
-
-- ✅ **Tested thoroughly** - Load/unload cycles verified
-
-- ✅ **Non-intrusive** - Doesn't modify existing system files**Problem**: Module loads but doesn't trigger
-
-- ⚠️ **Kernel code** - Exercise caution when modifying```bash
-
-# Check module is loaded
-
-## Licensessh root@192.168.0.156 "lsmod | grep poweroff_hook"
-
-
-
-GPL v2 (to comply with Linux kernel licensing)# Ensure you're doing power-off, NOT reboot
-
-# The module ignores reboot events by design
-
-## Contributing```
-
-
-
-Contributions welcome! Please:### Testing Issues
-
-
-
-1. Test thoroughly on real hardware**Problem**: Log file not created
-
-2. Follow kernel coding style```bash
-
-3. Document any changes# Check kernel messages
-
-4. Submit pull requests with clear descriptionsssh root@192.168.0.156 "dmesg | grep poweroff_hook"
-
-
-
-## Resources# Check all fallback paths
-
-./deploy/deploy.sh logs
-
-- [Cross-compiling Guide](https://roc-streaming.org/toolkit/docs/portability/cross_compiling.html) - Toolchain information
-
-- [Linaro Toolchains](http://releases.linaro.org/components/toolchain/binaries/) - GCC downloads# Verify module actually triggered
-
-- [Linux Kernel Module Programming](https://sysprog21.github.io/lkmpg/) - Module development guide# Look for "SYS_POWER_OFF event detected" in dmesg
-
-- [Reboot Notifier API](https://www.kernel.org/doc/html/latest/core-api/notifier.html) - Kernel notification chains```
-
-
-
-## Acknowledgments**Problem**: Module triggered during reboot
-
-```bash
-
-- Linaro for maintaining ARM toolchains# This is incorrect behavior
-
-- TrimUI community for device information# Check the code ensures: if (event != SYS_POWER_OFF) return;
-
-- Roc Streaming project for cross-compilation documentation# File a bug report
-
-```
-
-## Support
-
-## Security Considerations
-
-For issues, questions, or contributions:
-
-- Open an issue on GitHub⚠️ **This module runs in kernel space** with full system privileges. It:
-
-- Check `SUCCESS.md` for technical details- Writes to the filesystem from kernel context
-
-- See `QUICKSTART.md` for quick reference- Runs during system shutdown (critical path)
-
-- Has no user-space isolation
-
----
-
-**Recommendations**:
-
-**Status:** ✅ Production Ready  - Review the source code before loading
-
-**Last Updated:** October 16, 2025  - Test on non-critical devices first
-
-**Tested On:** TrimUI Brick, Linux 4.9.191- Monitor kernel logs for unexpected behavior
-
-- Remove the module when not needed: `rmmod poweroff_hook`
-
-## Permanent Installation
-
-To load the module automatically at boot:
-
-1. Install the module:
-   ```bash
-   make deploy-install
-   ```
-
-2. Add to module autoload list:
-   ```bash
-   ssh root@192.168.0.156
-   echo "poweroff_hook" >> /etc/modules
-   ```
-
-3. Reboot and verify:
-   ```bash
-   lsmod | grep poweroff_hook
-   ```
-
-**Note**: Only install permanently after successful testing!
-
-## Uninstallation
-
-### Remove from running system:
-```bash
-./deploy/deploy.sh unload
-```
-
-### Remove permanent installation:
-```bash
-ssh root@192.168.0.156
-rmmod poweroff_hook
-rm /lib/modules/4.9.191/poweroff_hook.ko
-sed -i '/poweroff_hook/d' /etc/modules
-depmod -a
-```
-
-## Development
-
-### Modifying the Module
-
-1. Edit `src/poweroff_hook.c`
-2. Rebuild: `make clean && make build`
-3. Reload on device: `make deploy-load`
-4. Test and check dmesg
-
-### Adding Features
-
-The module can be extended to:
-- Write additional metadata (uptime, system state)
-- Sync other files or configurations
-- Trigger external scripts or commands
-- Integrate with system monitoring
-
-**Important**: Keep the code minimal and fast - it runs during shutdown!
-
-### Debugging
-
-Use `printk` with appropriate log levels:
-- `KERN_ERR` - Errors
-- `KERN_WARNING` - Warnings
-- `KERN_INFO` - Informational (shown by default)
-- `KERN_DEBUG` - Debug (requires loglevel=8 or console)
-
-View all levels:
-```bash
-ssh root@192.168.0.156 "dmesg -l debug,info,warn,err | grep poweroff_hook"
-```
-
-## Device Information
-
-**Discovered during development**:
-- **Kernel**: 4.9.191 (Tina Linux, SMP PREEMPT)
-- **Architecture**: aarch64 (ARM64)
-- **SoC**: Allwinner A133 (sun50iw10p1)
-- **Root FS**: ext4, mounted writable at `/`
-- **Modules**: Loaded from `/lib/modules/4.9.191/`
-- **SSH**: Enabled on 192.168.0.156, root/tina
-
-**Filesystems**:
-- `/rom` - root filesystem (ext4, ro)
-- `/overlay` - overlay for root (ext4, rw)
-- `/` - merged (writable via overlay)
-- `/mnt/SDCARD` - SD card (exfat, rw)
+- Testing on different firmware versions
+- Documentation improvements
+- Code review and optimization
+- Additional error handling
 
 ## License
 
-This project is licensed under GPL v2 (required for Linux kernel modules).
+GPL v2 - See [LICENSE](LICENSE) file
+
+Kernel modules must be GPL-compatible to load into the Linux kernel.
 
 ## Credits
 
-- **Toolchain**: TrimUI/trimui toolchain_sdk_smartpro
-- **Cross-compiler**: ARM GCC 8.3-2019.02
-- **Target Device**: TrimUI Brick (A133 platform)
+- Original AXP2202 poweroff sequence research and testing
+- TrimUI Brick community for device specifications
+- Linaro for the ARM64 GCC toolchain
+- Linux kernel I2C and reboot notifier subsystems
+
+## Related Documentation
+
+- [PAK_INSTALL.md](PAK_INSTALL.md) - TrimUI pak installation guide
+- [QUICKSTART.md](QUICKSTART.md) - Quick start for developers
+- [SUCCESS.md](SUCCESS.md) - Project completion notes
+- [poweroff_daemon.c](poweroff_daemon.c) - Original userspace daemon (deprecated)
+
+## Disclaimer
+
+This module is provided as-is for the TrimUI Brick community. Use at your own risk. The authors are not responsible for any damage to your device. Always test on a device you're comfortable with potentially bricking.
+
+That said, this module has been thoroughly tested and is designed to be safe. The poweroff sequence is the same one used successfully in the userspace daemon version.
 
 ## Support
 
-For issues or questions:
-1. Check kernel messages: `dmesg | grep poweroff_hook`
-2. Verify module is loaded: `lsmod | grep poweroff_hook`
-3. Test with deployment script: `./deploy/deploy.sh test`
-4. Review this README's troubleshooting section
-
-## References
-
-- Linux kernel reboot notifier: `include/linux/reboot.h`
-- Kernel module programming: [Linux Device Drivers](https://lwn.net/Kernel/LDD3/)
-- TrimUI Brick documentation: [TrimUI GitHub](https://github.com/trimui)
+For issues, questions, or contributions:
+- GitHub Issues: https://github.com/Helaas/nextui-brick-poweroff-hook/issues
+- GitHub Discussions: https://github.com/Helaas/nextui-brick-poweroff-hook/discussions
 
 ---
 
-**Version**: 1.0  
-**Last Updated**: October 15, 2025  
-**Status**: Production Ready ✅
+**Last Updated:** October 16, 2025
+**Module Version:** 1.0
+**Target Device:** TrimUI Brick (tg5040)
+**Kernel Version:** Linux 4.9.191
