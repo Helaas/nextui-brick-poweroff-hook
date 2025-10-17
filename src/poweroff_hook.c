@@ -105,62 +105,136 @@ static int axp2202_write_reg(u8 reg, u8 value)
 static void execute_axp2202_poweroff(void)
 {
     int i, ret;
+    struct file *filp;
+    mm_segment_t old_fs;
+    char msg[512];
+    loff_t pos = 0;
+    struct timespec ts;
+    struct tm tm;
 
-    pr_info("poweroff_hook: ===== Starting AXP2202 Clean Poweroff Sequence =====\n");
+    /* Get current time for logging */
+    getnstimeofday(&ts);
+    time_to_tm(ts.tv_sec, 0, &tm);
+
+    /* CRITICAL: Write execution marker IMMEDIATELY to SD card (persists across reboot) */
+    /* Try SD card first, then fall back to /tmp if SD card is unmounted */
+    filp = filp_open("/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook_EXECUTED.txt", 
+                     O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (!IS_ERR(filp)) {
+        old_fs = get_fs();
+        set_fs(KERNEL_DS);
+        snprintf(msg, sizeof(msg), 
+                "=== PowerOff Hook EXECUTED ===\n"
+                "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
+                "Jiffies: %lu\n"
+                "About to execute AXP2202 PMIC shutdown sequence...\n\n",
+                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                tm.tm_hour, tm.tm_min, tm.tm_sec, jiffies);
+        vfs_write(filp, msg, strlen(msg), &pos);
+        vfs_fsync(filp, 1);  /* Force sync to disk */
+        set_fs(old_fs);
+        filp_close(filp, NULL);
+    }
+    
+    /* Also write to /tmp for power button case (SD card may be unmounted) */
+    pos = 0;
+    filp = filp_open("/poweroff_hook_EXECUTED.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (!IS_ERR(filp)) {
+        old_fs = get_fs();
+        set_fs(KERNEL_DS);
+        snprintf(msg, sizeof(msg), 
+                "=== PowerOff Hook EXECUTED (via %s) ===\n"
+                "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
+                "Jiffies: %lu\n\n",
+                (access_ok(VERIFY_READ, (void*)0xffffff8000000000, 1) ? "pm_power_off" : "reboot_notifier"),
+                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                tm.tm_hour, tm.tm_min, tm.tm_sec, jiffies);
+        vfs_write(filp, msg, strlen(msg), &pos);
+        vfs_fsync(filp, 1);
+        set_fs(old_fs);
+        filp_close(filp, NULL);
+    }
+
+    /* Force flush all pending kernel messages */
+    printk(KERN_EMERG "poweroff_hook: ===== Starting AXP2202 Clean Poweroff Sequence =====\n");
+
+    /* Verify I2C adapter is still available */
+    if (!i2c_adapter) {
+        printk(KERN_EMERG "poweroff_hook: CRITICAL ERROR - I2C adapter is NULL!\n");
+        return;
+    }
+    printk(KERN_EMERG "poweroff_hook: I2C adapter OK, proceeding with shutdown sequence\n");
 
     /* Step 1: Disable ALL interrupts (registers 0x40-0x47) */
-    pr_info("poweroff_hook: Step 1/10 - Disabling all interrupts\n");
+    printk(KERN_EMERG "poweroff_hook: Step 1/10 - Disabling all interrupts\n");
     for (i = 0x40; i <= 0x47; i++) {
         ret = axp2202_write_reg(i, 0x00);
         if (ret < 0)
-            pr_warn("poweroff_hook: Failed to disable IRQ reg 0x%02x\n", i);
+            printk(KERN_EMERG "poweroff_hook: Failed to disable IRQ reg 0x%02x, error=%d\n", i, ret);
     }
+    printk(KERN_EMERG "poweroff_hook: Step 1 complete\n");
 
     /* Step 2: Clear ALL interrupt status flags (registers 0x48-0x4F) */
-    pr_info("poweroff_hook: Step 2/10 - Clearing all interrupt status\n");
+    printk(KERN_EMERG "poweroff_hook: Step 2/10 - Clearing all interrupt status\n");
     for (i = 0x48; i <= 0x4F; i++) {
         ret = axp2202_write_reg(i, 0xFF);
         if (ret < 0)
-            pr_warn("poweroff_hook: Failed to clear IRQ status reg 0x%02x\n", i);
+            printk(KERN_EMERG "poweroff_hook: Failed to clear IRQ status reg 0x%02x, error=%d\n", i, ret);
     }
+    printk(KERN_EMERG "poweroff_hook: Step 2 complete\n");
 
     /* Step 3: Disable wake sources */
-    pr_info("poweroff_hook: Step 3/10 - Disabling wake sources\n");
+    printk(KERN_EMERG "poweroff_hook: Step 3/10 - Disabling wake sources\n");
     axp2202_write_reg(0x26, 0x00);
     axp2202_write_reg(0x27, 0x00);
+    printk(KERN_EMERG "poweroff_hook: Step 3 complete\n");
 
     /* Step 4: Battery disconnect - critical for preventing overheating */
-    pr_info("poweroff_hook: Step 4/10 - Disconnecting battery (prevents overheating)\n");
-    axp2202_write_reg(0x28, 0x00);
+    printk(KERN_EMERG "poweroff_hook: Step 4/10 - Disconnecting battery (prevents overheating)\n");
+    ret = axp2202_write_reg(0x28, 0x00);
+    if (ret < 0)
+        printk(KERN_EMERG "poweroff_hook: CRITICAL - Battery disconnect failed! error=%d\n", ret);
+    else
+        printk(KERN_EMERG "poweroff_hook: Battery disconnected successfully\n");
     msleep(100); /* Wait for battery disconnect to take effect */
+    printk(KERN_EMERG "poweroff_hook: Step 4 complete\n");
 
     /* Step 5: Disable coulomb counter (battery fuel gauge) */
-    pr_info("poweroff_hook: Step 5/10 - Disabling coulomb counter\n");
+    printk(KERN_EMERG "poweroff_hook: Step 5/10 - Disabling coulomb counter\n");
     axp2202_write_reg(0xB8, 0x00);
     msleep(100);
+    printk(KERN_EMERG "poweroff_hook: Step 5 complete\n");
 
     /* Step 6: Disable backup battery charging */
-    pr_info("poweroff_hook: Step 6/10 - Disabling backup battery\n");
+    printk(KERN_EMERG "poweroff_hook: Step 6/10 - Disabling backup battery\n");
     axp2202_write_reg(0x35, 0x00);
     msleep(100);
+    printk(KERN_EMERG "poweroff_hook: Step 6 complete\n");
 
     /* Step 7: Enable all shutdown sources */
-    pr_info("poweroff_hook: Step 7/10 - Enabling all shutdown sources\n");
+    printk(KERN_EMERG "poweroff_hook: Step 7/10 - Enabling all shutdown sources\n");
     axp2202_write_reg(0x22, 0xFF);
     msleep(50);
+    printk(KERN_EMERG "poweroff_hook: Step 7 complete\n");
 
     /* Step 8: Configure POK (Power OK) for immediate shutdown */
-    pr_info("poweroff_hook: Step 8/10 - Configuring immediate shutdown\n");
+    printk(KERN_EMERG "poweroff_hook: Step 8/10 - Configuring immediate shutdown\n");
     axp2202_write_reg(0x23, 0x00);
     axp2202_write_reg(0x24, 0x00);
     msleep(50);
+    printk(KERN_EMERG "poweroff_hook: Step 8 complete\n");
 
     /* Step 9: Trigger poweroff command */
-    pr_info("poweroff_hook: Step 9/10 - Triggering PMIC poweroff\n");
-    axp2202_write_reg(0x10, 0x01);
+    printk(KERN_EMERG "poweroff_hook: Step 9/10 - Triggering PMIC poweroff\n");
+    ret = axp2202_write_reg(0x10, 0x01);
+    if (ret < 0)
+        printk(KERN_EMERG "poweroff_hook: CRITICAL - PMIC poweroff trigger failed! error=%d\n", ret);
+    else
+        printk(KERN_EMERG "poweroff_hook: PMIC poweroff triggered successfully\n");
+    printk(KERN_EMERG "poweroff_hook: Step 9 complete\n");
 
     /* Step 10: Disable all DC-DC converters and LDOs (complete power cut) */
-    pr_info("poweroff_hook: Step 10/10 - Disabling all power rails\n");
+    printk(KERN_EMERG "poweroff_hook: Step 10/10 - Disabling all power rails\n");
     axp2202_write_reg(0x80, 0x00);  /* DCDC control register */
     axp2202_write_reg(0x83, 0x00);  /* DCDC1 */
     axp2202_write_reg(0x84, 0x00);  /* DCDC2 */
@@ -169,9 +243,10 @@ static void execute_axp2202_poweroff(void)
     axp2202_write_reg(0x91, 0x00);  /* LDO1 */
     axp2202_write_reg(0x92, 0x00);  /* LDO2 */
     msleep(200);
+    printk(KERN_EMERG "poweroff_hook: Step 10 complete\n");
 
-    pr_info("poweroff_hook: ===== AXP2202 Poweroff Sequence Complete =====\n");
-    pr_info("poweroff_hook: Battery overheating prevention sequence executed\n");
+    printk(KERN_EMERG "poweroff_hook: ===== AXP2202 Poweroff Sequence Complete =====\n");
+    printk(KERN_EMERG "poweroff_hook: Battery overheating prevention sequence executed\n");
 }
 
 /*
@@ -320,21 +395,21 @@ static int write_load_log(void)
 static int poweroff_notifier_callback(struct notifier_block *nb, 
                                       unsigned long event, void *data)
 {
-    /* Log all events for debugging */
-    printk(KERN_INFO "poweroff_hook: Reboot notifier called with event=%lu (POWER_OFF=%d, HALT=%d, RESTART=%d)\n",
+    /* Log all events for debugging - use KERN_EMERG to ensure messages are not lost */
+    printk(KERN_EMERG "poweroff_hook: Reboot notifier called with event=%lu (POWER_OFF=%d, HALT=%d, RESTART=%d)\n",
            event, SYS_POWER_OFF, SYS_HALT, SYS_RESTART);
 
     /* Only act on power-off or halt, ignore reboot/restart */
     if (event != SYS_POWER_OFF && event != SYS_HALT) {
-        printk(KERN_INFO "poweroff_hook: Ignoring event %lu (not POWER_OFF or HALT)\n", 
+        printk(KERN_EMERG "poweroff_hook: Ignoring event %lu (not POWER_OFF or HALT)\n", 
                event);
         return NOTIFY_DONE;
     }
 
-    printk(KERN_INFO "poweroff_hook: ============================================\n");
-    printk(KERN_INFO "poweroff_hook: Power-off/halt event detected (event=%lu)\n", event);
-    printk(KERN_INFO "poweroff_hook: Initiating clean poweroff to prevent battery overheating\n");
-    printk(KERN_INFO "poweroff_hook: ============================================\n");
+    printk(KERN_EMERG "poweroff_hook: ============================================\n");
+    printk(KERN_EMERG "poweroff_hook: Power-off/halt event detected (event=%lu)\n", event);
+    printk(KERN_EMERG "poweroff_hook: Initiating clean poweroff to prevent battery overheating\n");
+    printk(KERN_EMERG "poweroff_hook: ============================================\n");
 
     /* Execute AXP2202 PMIC clean poweroff sequence */
     execute_axp2202_poweroff();
@@ -342,7 +417,7 @@ static int poweroff_notifier_callback(struct notifier_block *nb,
     /* Write log file for debugging/verification */
     try_write_log();
 
-    printk(KERN_INFO "poweroff_hook: Clean poweroff sequence completed\n");
+    printk(KERN_EMERG "poweroff_hook: Clean poweroff sequence completed\n");
 
     /* Note: emergency_sync() not available in this kernel, 
      * but the kernel's shutdown path will handle syncing */
@@ -363,10 +438,10 @@ static struct notifier_block poweroff_notifier = {
  */
 static void axp2202_pm_power_off(void)
 {
-    printk(KERN_INFO "poweroff_hook: ============================================\n");
-    printk(KERN_INFO "poweroff_hook: pm_power_off() called - system shutting down\n");
-    printk(KERN_INFO "poweroff_hook: Initiating clean poweroff to prevent battery overheating\n");
-    printk(KERN_INFO "poweroff_hook: ============================================\n");
+    printk(KERN_EMERG "poweroff_hook: ============================================\n");
+    printk(KERN_EMERG "poweroff_hook: pm_power_off() called - system shutting down\n");
+    printk(KERN_EMERG "poweroff_hook: Initiating clean poweroff to prevent battery overheating\n");
+    printk(KERN_EMERG "poweroff_hook: ============================================\n");
 
     /* Execute AXP2202 PMIC clean poweroff sequence */
     execute_axp2202_poweroff();
@@ -374,14 +449,14 @@ static void axp2202_pm_power_off(void)
     /* Write log file for debugging/verification */
     try_write_log();
 
-    printk(KERN_INFO "poweroff_hook: Clean poweroff sequence completed\n");
+    printk(KERN_EMERG "poweroff_hook: Clean poweroff sequence completed\n");
 
     /* Call original pm_power_off if it exists */
     if (original_pm_power_off) {
-        printk(KERN_INFO "poweroff_hook: Calling original pm_power_off handler\n");
+        printk(KERN_EMERG "poweroff_hook: Calling original pm_power_off handler\n");
         original_pm_power_off();
     } else {
-        printk(KERN_INFO "poweroff_hook: No original pm_power_off handler, halting\n");
+        printk(KERN_EMERG "poweroff_hook: No original pm_power_off handler, halting\n");
         /* System will halt here */
         while (1) {
             cpu_relax();
@@ -440,6 +515,29 @@ static int __init poweroff_hook_init(void)
            original_pm_power_off);
 
     printk(KERN_INFO "poweroff_hook: ============================================\n");
+
+    /* Delete execution marker file from previous poweroff (if exists) */
+    {
+        struct file *filp;
+        mm_segment_t old_fs;
+        const char *marker_path = "/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook_EXECUTED.txt";
+        
+        old_fs = get_fs();
+        set_fs(KERNEL_DS);
+        
+        /* Try to remove the file - it's ok if it doesn't exist */
+        filp = filp_open(marker_path, O_RDWR, 0);
+        if (!IS_ERR(filp)) {
+            filp_close(filp, NULL);
+            /* Simple approach: truncate the file to clear it */
+            filp = filp_open(marker_path, O_WRONLY | O_TRUNC, 0644);
+            if (!IS_ERR(filp)) {
+                filp_close(filp, NULL);
+                printk(KERN_INFO "poweroff_hook: Cleared previous execution marker file\n");
+            }
+        }
+        set_fs(old_fs);
+    }
 
     /* Write load confirmation to log file for peace of mind */
     write_load_log();
