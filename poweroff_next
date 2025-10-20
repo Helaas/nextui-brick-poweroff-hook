@@ -1,4 +1,7 @@
 #!/bin/sh
+# Modified poweroff_next with poweroff_hook support
+# If poweroff_hook module is loaded, it handles the PMIC shutdown
+# Otherwise, falls back to normal busybox poweroff
 
 # Function to terminate all non-essential processes
 task_killer() {
@@ -23,17 +26,26 @@ kill_all_processes() {
     task_killer -KILL
 }
 
-# Close all possible processes before rebooting
-kill_all_processes
-
-# Synchronize data with storage to minimize data corruption risks
-sync
-
-# Unmount sdcard
-swapoff -a
-umount -f /etc/profile
-umount -l /mnt/SDCARD
-
-# Shutdown the system
-echo "Shutting down the system..."
-busybox poweroff
+# Check if poweroff_hook module is loaded
+if lsmod | grep -q "^poweroff_hook"; then
+    echo "poweroff hit" > /hook.txt
+    # Make sure we sleep long enough for the hook to handle everything
+	sleep 60
+else
+    echo "PowerOff Hook module not loaded - using standard poweroff"
+    
+    # Close all possible processes before rebooting
+    kill_all_processes
+    
+    # Synchronize data with storage to minimize data corruption risks
+    sync
+    
+    # Unmount sdcard
+    swapoff -a
+    umount -f /etc/profile
+    umount -l /mnt/SDCARD
+    
+    # Shutdown the system
+    echo "Shutting down the system..."
+    busybox poweroff
+fi
