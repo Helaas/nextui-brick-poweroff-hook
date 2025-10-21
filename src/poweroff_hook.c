@@ -6,12 +6,15 @@
  * when the TrimUI Brick powers off. Without this module, the battery can overheat
  * during shutdown due to incomplete power rail disconnection.
  * 
- * OPERATION:
- * 1. poweroff_next script creates /tmp/poweroff_signal
- * 2. Module detects signal and waits for /mnt/SDCARD to be unmounted
- * 3. Module executes AXP2202 PMIC shutdown sequence
- * 4. Module calls kernel poweroff
- * 
+* OPERATION:
+ * 1. NextUI creates /tmp/poweroff signal file
+ * 2. Module detects signal and begins shutdown sequence
+ * 3. Kill all user processes (SIGTERM then SIGKILL)
+ * 4. Unmount filesystems (swapoff, umount /etc/profile, umount /mnt/SDCARD)
+ * 5. Verify SD card unmount status
+ * 6. Execute AXP2202 PMIC shutdown sequence
+ * 7. Call kernel poweroff (standard shutdown)
+ *
  * Target: TrimUI Brick (kernel 4.9.191, aarch64, AXP2202 PMIC on I2C bus 6)
  * License: GPL v2
  */
@@ -39,7 +42,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("TrimUI Brick Power-Off Hook");
 MODULE_DESCRIPTION("AXP2202 PMIC clean poweroff to prevent battery overheating");
-MODULE_VERSION("2.0");
+MODULE_VERSION("1.0");
 
 /* AXP2202 PMIC I2C configuration */
 #define I2C_BUS_NUMBER 6
@@ -127,7 +130,8 @@ static void write_log(const char *message)
 }
 
 /*
- * Write debug marker to /hook.txt
+ * Write debug marker to /root/poweroff_hook.log
+ * This will be moved to LOG_PATH
  */
 static void write_debug_marker(const char *stage)
 {
@@ -140,7 +144,7 @@ static void write_debug_marker(const char *stage)
     
     old_fs = get_fs();
     set_fs(KERNEL_DS);
-    marker_filp = filp_open("/hook.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    marker_filp = filp_open("/root/poweroff_hook.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (!IS_ERR(marker_filp)) {
         vfs_write(marker_filp, msg, strlen(msg), &pos);
         vfs_fsync(marker_filp, 1);
@@ -410,7 +414,7 @@ static int __init poweroff_hook_init(void)
     struct tm tm;
 
     printk(KERN_INFO "poweroff_hook: ============================================\n");
-    printk(KERN_INFO "poweroff_hook: TrimUI Brick AXP2202 Clean Poweroff Module v2.0\n");
+    printk(KERN_INFO "poweroff_hook: TrimUI Brick AXP2202 Clean Poweroff Module v1.0\n");
     printk(KERN_INFO "poweroff_hook: ============================================\n");
     printk(KERN_INFO "poweroff_hook: Target kernel: %s\n", UTS_RELEASE);
     printk(KERN_INFO "poweroff_hook: Purpose: Prevent battery overheating on shutdown\n");
@@ -462,6 +466,37 @@ static int __init poweroff_hook_init(void)
              tm.tm_hour, tm.tm_min, tm.tm_sec,
              POWEROFF_SIGNAL_FILE, I2C_BUS_NUMBER, AXP2202_I2C_ADDR);
     write_log(log_msg);
+
+    /* Append content from /root/poweroff_hook.log to the main log file
+     * This preserves debug markers from previous module loads/runs
+     */
+    {
+        struct file *src_filp, *dst_filp;
+        char buffer[1024];
+        ssize_t bytes_read;
+        loff_t pos = 0;
+
+        /* Open source file for reading */
+        src_filp = filp_open("/root/poweroff_hook.log", O_RDONLY, 0);
+        if (!IS_ERR(src_filp)) {
+            /* Open destination file for appending */
+            dst_filp = filp_open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (!IS_ERR(dst_filp)) {
+                /* Read and copy content */
+                while ((bytes_read = vfs_read(src_filp, buffer, sizeof(buffer), &pos)) > 0) {
+                    loff_t write_pos = 0;
+                    vfs_write(dst_filp, buffer, bytes_read, &write_pos);
+                }
+                filp_close(dst_filp, NULL);
+                printk(KERN_INFO "poweroff_hook: Appended content from /root/poweroff_hook.log to main log\n");
+            } else {
+                printk(KERN_WARNING "poweroff_hook: Could not open destination log file for appending\n");
+            }
+            filp_close(src_filp, NULL);
+        } else {
+            printk(KERN_INFO "poweroff_hook: No /root/poweroff_hook.log file found to append\n");
+        }
+    }
 
     /* Start monitor thread */
     monitor_thread = kthread_run(monitor_thread_fn, NULL, "poweroff_monitor");

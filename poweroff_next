@@ -7,7 +7,7 @@
 task_killer() {
     for pid in /proc/[0-9]*; do
         pid=$(basename "$pid")
-        
+
         # Ignore critical processes and the script's own process
         if [ "$pid" != "1" ] && [ "$pid" != "$$" ]; then
             kill $1 "$pid" 2>/dev/null
@@ -19,7 +19,7 @@ task_killer() {
 kill_all_processes() {
     echo "Attempting to gracefully shut down processes..."
     task_killer -TERM
-    sleep 0.5  # Wait to allow processes to terminate gracefully
+    sleep 0.5 # Wait to allow processes to terminate gracefully
 
     # Forcefully kill any remaining processes
     echo "Forcing termination of remaining processes..."
@@ -28,24 +28,36 @@ kill_all_processes() {
 
 # Check if poweroff_hook module is loaded
 if lsmod | grep -q "^poweroff_hook"; then
-    echo "poweroff hit" > /hook.txt
+    # Logfile must live outside of the SDCARD as logging continues after it is unmounted
+    echo "Hook detected in poweroff_next!" >/root/poweroff_hook.log
+
     # Make sure we sleep long enough for the hook to handle everything
-	sleep 60
-else
-    echo "PowerOff Hook module not loaded - using standard poweroff"
-    
-    # Close all possible processes before rebooting
-    kill_all_processes
-    
-    # Synchronize data with storage to minimize data corruption risks
-    sync
-    
-    # Unmount sdcard
-    swapoff -a
-    umount -f /etc/profile
-    umount -l /mnt/SDCARD
-    
-    # Shutdown the system
-    echo "Shutting down the system..."
-    busybox poweroff
+    # Processing inside the hook:
+    #   1. NextUI creates /tmp/poweroff signal file
+    #   2. Module detects signal and begins shutdown sequence
+    #   3. Kill all user processes (SIGTERM then SIGKILL)
+    #   4. Unmount filesystems (swapoff, umount /etc/profile, umount /mnt/SDCARD)
+    #   5. Verify SD card unmount status
+    #   6. Execute AXP2202 PMIC shutdown sequence
+    #   7. Call kernel poweroff (standard shutdown)
+    sleep 10
+
+    # Existing logic as a fallback
 fi
+
+echo "PowerOff Hook module not loaded - using standard poweroff"
+
+# Close all possible processes before rebooting
+kill_all_processes
+
+# Synchronize data with storage to minimize data corruption risks
+sync
+
+# Unmount sdcard
+swapoff -a
+umount -f /etc/profile
+umount -l /mnt/SDCARD
+
+# Shutdown the system
+echo "Shutting down the system..."
+busybox poweroff
