@@ -241,11 +241,10 @@ static void execute_axp2202_poweroff(void)
             printk(KERN_EMERG "poweroff_hook: Failed to clear IRQ status reg 0x%02x, error=%d\n", i, ret);
     }
 
-    /* Step 3: Disable wake sources */
+    /* Step 3: Disable wake sources (but NOT 0x27 - that's the power button config!) */
     printk(KERN_EMERG "poweroff_hook: Step 3/10 - Disabling wake sources\n");
     write_debug_marker("STEP3_DISABLE_WAKE");
     axp2202_write_reg(0x26, 0x00);
-    axp2202_write_reg(0x27, 0x00);
 
     /* Step 4: Battery disconnect - critical for preventing overheating */
     printk(KERN_EMERG "poweroff_hook: Step 4/10 - Disconnecting battery (prevents overheating)\n");
@@ -276,35 +275,20 @@ static void execute_axp2202_poweroff(void)
     axp2202_write_reg(0x22, 0xFF);
     msleep(50);
 
-    /* Step 8: Configure POK (Power OK) for immediate shutdown */
-    printk(KERN_EMERG "poweroff_hook: Step 8/10 - Configuring immediate shutdown\n");
-    write_debug_marker("STEP8_POK_CONFIG");
-    axp2202_write_reg(0x23, 0x00);
-    axp2202_write_reg(0x24, 0x00);
-    msleep(50);
-
-    /* Step 9: Trigger poweroff command */
-    printk(KERN_EMERG "poweroff_hook: Step 9/10 - Triggering PMIC poweroff\n");
-    write_debug_marker("STEP9_TRIGGER_POWEROFF");
-    ret = axp2202_write_reg(0x10, 0x01);
+    /* Step 8: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
+    /* This is the ACTUAL power-off command on AXP717/AXP2202 (confirmed by working POC) */
+    printk(KERN_EMERG "poweroff_hook: Step 8/10 - TRIGGERING SOFTWARE POWER-OFF\n");
+    write_debug_marker("STEP8_TRIGGER_POWEROFF");
+    ret = axp2202_write_reg(0x27, 0x01);
     if (ret < 0)
         printk(KERN_EMERG "poweroff_hook: CRITICAL - PMIC poweroff trigger failed! error=%d\n", ret);
     else
-        printk(KERN_EMERG "poweroff_hook: PMIC poweroff triggered successfully\n");
-    write_debug_marker("STEP9_COMPLETE");
-
-    /* Step 10: Disable all DC-DC converters and LDOs (complete power cut) */
-    printk(KERN_EMERG "poweroff_hook: Step 10/10 - Disabling all power rails\n");
-    write_debug_marker("STEP10_POWER_RAILS");
-    axp2202_write_reg(0x80, 0x00);
-    axp2202_write_reg(0x83, 0x00);
-    axp2202_write_reg(0x84, 0x00);
-    axp2202_write_reg(0x85, 0x00);
-    axp2202_write_reg(0x90, 0x00);
-    axp2202_write_reg(0x91, 0x00);
-    axp2202_write_reg(0x92, 0x00);
-    write_debug_marker("STEP10_COMPLETE");
-    msleep(200);
+        printk(KERN_EMERG "poweroff_hook: PMIC SOFTWARE POWER-OFF TRIGGERED (0x27=0x01)\n");
+    write_debug_marker("STEP8_COMPLETE");
+    
+    /* Power should cut almost immediately after this command.
+     * If we reach here, give PMIC a moment to latch the shutdown. */
+    msleep(1000);
 
     printk(KERN_EMERG "poweroff_hook: ===== AXP2202 Poweroff Sequence Complete =====\n");
     write_debug_marker("PMIC_SEQUENCE_COMPLETE");
@@ -428,13 +412,12 @@ static int __init poweroff_hook_init(void)
     printk(KERN_INFO "poweroff_hook: I2C adapter %d acquired for AXP2202 (addr 0x%02x)\n",
            I2C_BUS_NUMBER, AXP2202_I2C_ADDR);
 
-    /* Disable PMIC hardware forced shutdown on long power button press
-     * Register 0x27 bit 3 controls whether long-press PEK forces hardware shutdown
-     * Clearing this bit ensures the PMIC won't bypass our software shutdown sequence
+    /* DO NOT touch register 0x27 during init!
+     * Register 0x27 bit 0 (0x01) is the SOFTWARE POWER-OFF TRIGGER.
+     * Setting it here would immediately power off the device.
+     * We only write 0x01 to this register when we want to shut down.
      */
-    printk(KERN_INFO "poweroff_hook: Disabling PMIC forced hardware shutdown on long press\n");
-    axp2202_write_reg(0x27, 0x00);  // Disable all PEK forced shutdown features
-    printk(KERN_INFO "poweroff_hook: PMIC forced shutdown disabled\n");
+    printk(KERN_INFO "poweroff_hook: PMIC initialized (register 0x27 preserved)\n");
 
     /* Remove old signal file if it exists (prevents boot loop if system crashed during shutdown) */
     old_fs = get_fs();
