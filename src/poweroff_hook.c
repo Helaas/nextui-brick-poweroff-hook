@@ -254,56 +254,49 @@ static void execute_axp2202_poweroff(void)
 
     /* Step 3: Disable wake/sleep functionality (0x25: Sleep and Wakeup configure) */
     /* Bit 5: IRQ wake disable, Bit 1: Software wake disable, Bit 0: Sleep disable */
-    printk(KERN_EMERG "poweroff_hook: Step 3/10 - Disabling wake/sleep features\n");
+    printk(KERN_EMERG "poweroff_hook: Step 3/7 - Disabling wake/sleep features\n");
     write_debug_marker("STEP3_DISABLE_WAKE");
     axp2202_write_reg(0x25, 0x00);
 
-    /* Step 4: NOTE - AXP717/AXP2202 has no software battery disconnect/ship-mode */
-    /* Register 0x28 is Auto Sleep map0 (power rail control for sleep mode) */
-    /* Skip this step as there's no BATFET software control on AXP717/AXP2202 */
-    printk(KERN_EMERG "poweroff_hook: Step 4/10 - Skipping battery disconnect (not available on AXP717/AXP2202)\n");
-    write_debug_marker("STEP4_BATFET_NOT_AVAILABLE");
-    /* AXP717/AXP2202 datasheet only documents hardware POR (>16s power button) for deep reset */
-
-    /* Step 5: Disable fuel gauge (0x0B bit 2 = Gauge enable) */
+    /* Step 4: Disable fuel gauge (0x0B bit 2 = Gauge enable) */
     /* Read-modify-write to preserve other bits in module enable control1 */
-    printk(KERN_EMERG "poweroff_hook: Step 5/10 - Disabling fuel gauge\n");
-    write_debug_marker("STEP5_DISABLE_GAUGE");
+    printk(KERN_EMERG "poweroff_hook: Step 4/7 - Disabling fuel gauge\n");
+    write_debug_marker("STEP4_DISABLE_GAUGE");
     /* Clear bit 2 of register 0x0B to disable gauge (safer to read-modify-write) */
     /* For now, write 0x00 to disable all non-essential features in 0x0B */
     axp2202_write_reg(0x0B, 0x00);
     msleep(100);
 
-    /* Step 6: Disable backup/button battery charging (0x19 bit 3, 0x6A for voltage) */
+    /* Step 5: Disable backup/button battery charging (0x19 bit 3, 0x6A for voltage) */
     /* Register 0x19 = module enable control2, bit 3 = Button Battery charge enable */
-    printk(KERN_EMERG "poweroff_hook: Step 6/10 - Disabling backup battery charging\n");
-    write_debug_marker("STEP6_BACKUP_BATTERY");
-    /* Clear bit 3 of 0x19, but preserve bit 0 (main battery charge) for now */
-    /* Writing 0x00 will disable boost, backup battery, LED, and main charger */
-    axp2202_write_reg(0x19, 0x00);
+    /* IMPORTANT: Preserve bit 0 (main battery charge enable) to allow charging while off */
+    printk(KERN_EMERG "poweroff_hook: Step 5/7 - Disabling backup battery (preserving main charge)\n");
+    write_debug_marker("STEP5_BACKUP_BATTERY");
+    /* Write 0x01 to keep bit 0 (battery charge) ON, disable bits 1-4 (boost, backup, LED) */
+    axp2202_write_reg(0x19, 0x01);  /* Keep main battery charging enabled! */
     msleep(100);
 
-    /* Step 7: Configure shutdown sources (0x22 = PWROFF_EN) */
+    /* Step 6: Configure shutdown sources (0x22 = PWROFF_EN) */
     /* WARNING: Don't write 0xFF - sets reserved bits! */
     /* Bit 3: LDO Over-Current poweroff enable */
     /* Bit 1: PWRON > OFFLEVEL poweroff enable */
     /* Bit 0: Function select (0=poweroff, 1=restart) when button event occurs */
-    printk(KERN_EMERG "poweroff_hook: Step 7/10 - Configuring shutdown sources\n");
-    write_debug_marker("STEP7_SHUTDOWN_SOURCES");
+    printk(KERN_EMERG "poweroff_hook: Step 6/7 - Configuring shutdown sources\n");
+    write_debug_marker("STEP6_SHUTDOWN_SOURCES");
     /* Set bit 3 (LDO OC) and bit 1 (button OFFLEVEL), clear bit 0 for poweroff mode */
     axp2202_write_reg(0x22, 0x0A);  /* 0b00001010 - only set documented bits */
     msleep(50);
 
-    /* Step 8: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
+    /* Step 7: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
     /* This is the ACTUAL power-off command on AXP717/AXP2202 (confirmed by working POC) */
-    printk(KERN_EMERG "poweroff_hook: Step 8/10 - TRIGGERING SOFTWARE POWER-OFF\n");
-    write_debug_marker("STEP8_TRIGGER_POWEROFF");
+    printk(KERN_EMERG "poweroff_hook: Step 7/7 - TRIGGERING SOFTWARE POWER-OFF\n");
+    write_debug_marker("STEP7_TRIGGER_POWEROFF");
     ret = axp2202_write_reg(0x27, 0x01);
     if (ret < 0)
         printk(KERN_EMERG "poweroff_hook: CRITICAL - PMIC poweroff trigger failed! error=%d\n", ret);
     else
         printk(KERN_EMERG "poweroff_hook: PMIC SOFTWARE POWER-OFF TRIGGERED (0x27=0x01)\n");
-    write_debug_marker("STEP8_COMPLETE");
+    write_debug_marker("STEP7_COMPLETE");
     
     /* Power should cut almost immediately after this command.
      * If we reach here, give PMIC a moment to latch the shutdown. */
