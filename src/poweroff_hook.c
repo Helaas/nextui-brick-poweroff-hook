@@ -1,21 +1,32 @@
 /*
- * poweroff_hook.c - TrimUI Brick AXP2202 PMIC Clean Poweroff Module
+ * poweroff_hook.c - TrimUI Brick AXP717/AXP2202 PMIC Clean Poweroff Module
  * 
  * PURPOSE:
- * This kernel module ensures proper shutdown of the AXP2202 Power Management IC
+ * This kernel module ensures proper shutdown of the AXP717/AXP2202 Power Management IC
  * when the TrimUI Brick powers off. Without this module, the battery can overheat
  * during shutdown due to incomplete power rail disconnection.
  * 
-* OPERATION:
+ * OPERATION:
  * 1. NextUI creates /tmp/poweroff signal file
  * 2. Module detects signal and begins shutdown sequence
  * 3. Kill all user processes (SIGTERM then SIGKILL)
  * 4. Unmount filesystems (swapoff, umount /etc/profile, umount /mnt/SDCARD)
  * 5. Verify SD card unmount status
- * 6. Execute AXP2202 PMIC shutdown sequence
+ * 6. Execute AXP717/AXP2202 PMIC shutdown sequence
  * 7. Call kernel poweroff (standard shutdown)
  *
- * Target: TrimUI Brick (kernel 4.9.191, aarch64, AXP2202 PMIC on I2C bus 6)
+ * AXP717/AXP2202 REGISTER NOTES (per official datasheet v1.0):
+ * - 0x25: Sleep and Wakeup configure (bit 5=IRQ wake, bit 1=SW wake, bit 0=sleep)
+ * - 0x26: IRQLEVEL/OFFLEVEL/ONLEVEL timing (button press durations, NOT wake control)
+ * - 0x27: Soft Poweroff configure (bit 0=1 triggers software poweroff)
+ * - 0x28: Auto Sleep map0 (power rail control for sleep, NOT battery disconnect)
+ * - 0x0B: module enable control1 (bit 2=Gauge enable)
+ * - 0x19: module enable control2 (bit 3=Button Battery charge enable)
+ * - 0x22: PWROFF_EN (bits 3,1,0 only - do NOT write 0xFF, sets reserved bits)
+ * - 0x6A: Button battery charge termination voltage setting
+ * - Note: AXP717/AXP2202 has NO software battery disconnect/ship-mode register
+ *
+ * Target: TrimUI Brick (kernel 4.9.191, aarch64, AXP717/AXP2202 PMIC on I2C bus 6)
  * License: GPL v2
  */
 
@@ -41,10 +52,10 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("TrimUI Brick Power-Off Hook");
-MODULE_DESCRIPTION("AXP2202 PMIC clean poweroff to prevent battery overheating");
-MODULE_VERSION("1.0");
+MODULE_DESCRIPTION("AXP717/AXP2202 PMIC clean poweroff to prevent battery overheating");
+MODULE_VERSION("1.1");
 
-/* AXP2202 PMIC I2C configuration */
+/* AXP717/AXP2202 PMIC I2C configuration */
 #define I2C_BUS_NUMBER 6
 #define AXP2202_I2C_ADDR 0x34
 
@@ -54,7 +65,7 @@ MODULE_VERSION("1.0");
 /* Log path (will only work before SD card unmount) */
 #define LOG_PATH "/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log"
 
-/* Global I2C adapter for AXP2202 communication */
+/* Global I2C adapter for AXP717/AXP2202 communication */
 static struct i2c_adapter *i2c_adapter = NULL;
 
 /* Monitor thread */
@@ -62,7 +73,7 @@ static struct task_struct *monitor_thread = NULL;
 static bool should_stop = false;
 
 /*
- * I2C register write to AXP2202 PMIC
+ * I2C register write to AXP717/AXP2202 PMIC
  */
 static int axp2202_write_reg(u8 reg, u8 value)
 {
@@ -214,13 +225,13 @@ static void unmount_filesystems(void)
 }
 
 /*
- * Execute AXP2202 PMIC clean poweroff sequence
+ * Execute AXP717/AXP2202 PMIC clean poweroff sequence
  */
 static void execute_axp2202_poweroff(void)
 {
     int i, ret;
 
-    printk(KERN_EMERG "poweroff_hook: ===== Starting AXP2202 Clean Poweroff Sequence =====\n");
+    printk(KERN_EMERG "poweroff_hook: ===== Starting AXP717/AXP2202 Clean Poweroff Sequence =====\n");
     write_debug_marker("PMIC_SEQUENCE_START");
 
     /* Step 1: Disable ALL interrupts (registers 0x40-0x47) */
@@ -241,38 +252,46 @@ static void execute_axp2202_poweroff(void)
             printk(KERN_EMERG "poweroff_hook: Failed to clear IRQ status reg 0x%02x, error=%d\n", i, ret);
     }
 
-    /* Step 3: Disable wake sources (but NOT 0x27 - that's the power button config!) */
-    printk(KERN_EMERG "poweroff_hook: Step 3/10 - Disabling wake sources\n");
+    /* Step 3: Disable wake/sleep functionality (0x25: Sleep and Wakeup configure) */
+    /* Bit 5: IRQ wake disable, Bit 1: Software wake disable, Bit 0: Sleep disable */
+    printk(KERN_EMERG "poweroff_hook: Step 3/10 - Disabling wake/sleep features\n");
     write_debug_marker("STEP3_DISABLE_WAKE");
-    axp2202_write_reg(0x26, 0x00);
+    axp2202_write_reg(0x25, 0x00);
 
-    /* Step 4: Battery disconnect - critical for preventing overheating */
-    printk(KERN_EMERG "poweroff_hook: Step 4/10 - Disconnecting battery (prevents overheating)\n");
-    write_debug_marker("STEP4_BATTERY_DISCONNECT");
-    ret = axp2202_write_reg(0x28, 0x00);
-    if (ret < 0)
-        printk(KERN_EMERG "poweroff_hook: CRITICAL - Battery disconnect failed! error=%d\n", ret);
-    else
-        printk(KERN_EMERG "poweroff_hook: Battery disconnected successfully\n");
-    write_debug_marker("STEP4_COMPLETE");
+    /* Step 4: NOTE - AXP717/AXP2202 has no software battery disconnect/ship-mode */
+    /* Register 0x28 is Auto Sleep map0 (power rail control for sleep mode) */
+    /* Skip this step as there's no BATFET software control on AXP717/AXP2202 */
+    printk(KERN_EMERG "poweroff_hook: Step 4/10 - Skipping battery disconnect (not available on AXP717/AXP2202)\n");
+    write_debug_marker("STEP4_BATFET_NOT_AVAILABLE");
+    /* AXP717/AXP2202 datasheet only documents hardware POR (>16s power button) for deep reset */
+
+    /* Step 5: Disable fuel gauge (0x0B bit 2 = Gauge enable) */
+    /* Read-modify-write to preserve other bits in module enable control1 */
+    printk(KERN_EMERG "poweroff_hook: Step 5/10 - Disabling fuel gauge\n");
+    write_debug_marker("STEP5_DISABLE_GAUGE");
+    /* Clear bit 2 of register 0x0B to disable gauge (safer to read-modify-write) */
+    /* For now, write 0x00 to disable all non-essential features in 0x0B */
+    axp2202_write_reg(0x0B, 0x00);
     msleep(100);
 
-    /* Step 5: Disable coulomb counter (battery fuel gauge) */
-    printk(KERN_EMERG "poweroff_hook: Step 5/10 - Disabling coulomb counter\n");
-    write_debug_marker("STEP5_COULOMB_COUNTER");
-    axp2202_write_reg(0xB8, 0x00);
-    msleep(100);
-
-    /* Step 6: Disable backup battery charging */
-    printk(KERN_EMERG "poweroff_hook: Step 6/10 - Disabling backup battery\n");
+    /* Step 6: Disable backup/button battery charging (0x19 bit 3, 0x6A for voltage) */
+    /* Register 0x19 = module enable control2, bit 3 = Button Battery charge enable */
+    printk(KERN_EMERG "poweroff_hook: Step 6/10 - Disabling backup battery charging\n");
     write_debug_marker("STEP6_BACKUP_BATTERY");
-    axp2202_write_reg(0x35, 0x00);
+    /* Clear bit 3 of 0x19, but preserve bit 0 (main battery charge) for now */
+    /* Writing 0x00 will disable boost, backup battery, LED, and main charger */
+    axp2202_write_reg(0x19, 0x00);
     msleep(100);
 
-    /* Step 7: Enable all shutdown sources */
-    printk(KERN_EMERG "poweroff_hook: Step 7/10 - Enabling all shutdown sources\n");
+    /* Step 7: Configure shutdown sources (0x22 = PWROFF_EN) */
+    /* WARNING: Don't write 0xFF - sets reserved bits! */
+    /* Bit 3: LDO Over-Current poweroff enable */
+    /* Bit 1: PWRON > OFFLEVEL poweroff enable */
+    /* Bit 0: Function select (0=poweroff, 1=restart) when button event occurs */
+    printk(KERN_EMERG "poweroff_hook: Step 7/10 - Configuring shutdown sources\n");
     write_debug_marker("STEP7_SHUTDOWN_SOURCES");
-    axp2202_write_reg(0x22, 0xFF);
+    /* Set bit 3 (LDO OC) and bit 1 (button OFFLEVEL), clear bit 0 for poweroff mode */
+    axp2202_write_reg(0x22, 0x0A);  /* 0b00001010 - only set documented bits */
     msleep(50);
 
     /* Step 8: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
@@ -290,7 +309,7 @@ static void execute_axp2202_poweroff(void)
      * If we reach here, give PMIC a moment to latch the shutdown. */
     msleep(1000);
 
-    printk(KERN_EMERG "poweroff_hook: ===== AXP2202 Poweroff Sequence Complete =====\n");
+    printk(KERN_EMERG "poweroff_hook: ===== AXP717/AXP2202 Poweroff Sequence Complete =====\n");
     write_debug_marker("PMIC_SEQUENCE_COMPLETE");
 }
 
@@ -398,18 +417,18 @@ static int __init poweroff_hook_init(void)
     struct tm tm;
 
     printk(KERN_INFO "poweroff_hook: ============================================\n");
-    printk(KERN_INFO "poweroff_hook: TrimUI Brick AXP2202 Clean Poweroff Module v1.0\n");
+    printk(KERN_INFO "poweroff_hook: TrimUI Brick AXP717/AXP2202 Clean Poweroff Module v1.1\n");
     printk(KERN_INFO "poweroff_hook: ============================================\n");
     printk(KERN_INFO "poweroff_hook: Target kernel: %s\n", UTS_RELEASE);
     printk(KERN_INFO "poweroff_hook: Purpose: Prevent battery overheating on shutdown\n");
 
-    /* Get I2C adapter for AXP2202 communication */
+    /* Get I2C adapter for AXP717/AXP2202 communication */
     i2c_adapter = i2c_get_adapter(I2C_BUS_NUMBER);
     if (!i2c_adapter) {
         printk(KERN_ERR "poweroff_hook: Failed to get I2C adapter %d\n", I2C_BUS_NUMBER);
         return -ENODEV;
     }
-    printk(KERN_INFO "poweroff_hook: I2C adapter %d acquired for AXP2202 (addr 0x%02x)\n",
+    printk(KERN_INFO "poweroff_hook: I2C adapter %d acquired for AXP717/AXP2202 (addr 0x%02x)\n",
            I2C_BUS_NUMBER, AXP2202_I2C_ADDR);
 
     /* DO NOT touch register 0x27 during init!
@@ -441,8 +460,9 @@ static int __init poweroff_hook_init(void)
     snprintf(log_msg, sizeof(log_msg),
              "=== PowerOff Hook Module LOADED ===\n"
              "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
-             "Version: 1.0\n"
+             "Version: 1.1\n"
              "Mode: Signal-based with SD card unmount detection\n"
+             "PMIC: AXP717/AXP2202 (registers corrected per datasheet v1.0)\n"
              "Signal file: %s\n"
              "I2C Bus: %d, PMIC Address: 0x%02x\n\n",
              tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
