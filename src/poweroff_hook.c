@@ -325,9 +325,9 @@ static int monitor_thread_fn(void *data)
 
     while (!kthread_should_stop() && !should_stop) {
         check_count++;
-        
-        /* Log every 100 checks (every 10 seconds) to prove thread is running */
-        if (check_count % 100 == 0) {
+
+        /* Log every 1000 checks (every 100 seconds) to prove thread is running */
+        if (check_count % 1000 == 0) {
             printk(KERN_INFO "poweroff_hook: Monitor thread alive, checked %d times\n", check_count);
         }
         
@@ -458,7 +458,7 @@ static int __init poweroff_hook_init(void)
     snprintf(log_msg, sizeof(log_msg),
              "=== PowerOff Hook Module LOADED ===\n"
              "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
-             "Version: 2.0\n"
+             "Version: 1.0\n"
              "Mode: Signal-based with SD card unmount detection\n"
              "Signal file: %s\n"
              "I2C Bus: %d, PMIC Address: 0x%02x\n\n",
@@ -474,7 +474,11 @@ static int __init poweroff_hook_init(void)
         struct file *src_filp, *dst_filp;
         char buffer[1024];
         ssize_t bytes_read;
-        loff_t pos = 0;
+        loff_t read_pos = 0;
+        mm_segment_t old_fs_copy;
+
+        old_fs_copy = get_fs();
+        set_fs(KERNEL_DS);
 
         /* Open source file for reading */
         src_filp = filp_open("/root/poweroff_hook.log", O_RDONLY, 0);
@@ -483,10 +487,12 @@ static int __init poweroff_hook_init(void)
             dst_filp = filp_open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
             if (!IS_ERR(dst_filp)) {
                 /* Read and copy content */
-                while ((bytes_read = vfs_read(src_filp, buffer, sizeof(buffer), &pos)) > 0) {
-                    loff_t write_pos = 0;
+                while ((bytes_read = vfs_read(src_filp, buffer, sizeof(buffer), &read_pos)) > 0) {
+                    loff_t write_pos = dst_filp->f_pos;
                     vfs_write(dst_filp, buffer, bytes_read, &write_pos);
+                    dst_filp->f_pos = write_pos;
                 }
+                vfs_fsync(dst_filp, 1);
                 filp_close(dst_filp, NULL);
                 printk(KERN_INFO "poweroff_hook: Appended content from /root/poweroff_hook.log to main log\n");
             } else {
@@ -496,6 +502,8 @@ static int __init poweroff_hook_init(void)
         } else {
             printk(KERN_INFO "poweroff_hook: No /root/poweroff_hook.log file found to append\n");
         }
+
+        set_fs(old_fs_copy);
     }
 
     /* Start monitor thread */
