@@ -118,6 +118,7 @@ clean:
 	@rm -f $(BIN_DIR)/jq $(BIN_DIR)/jq.LICENSE
 	@rm -f $(BIN_DIR)/minui-list $(BIN_DIR)/minui-presenter
 	@rm -rf $(DEPLOY_DIR)
+	@rm -rf pakz/Tools pakz/.system/$(DEVICE)
 	@echo "Clean complete."
 
 # Full clean including dependencies
@@ -153,6 +154,20 @@ deploy: build
 		-x "$(BIN_DIR)/.DS_Store"
 	@echo "Deployment package created: $(DEPLOY_DIR)/PowerOffHook.pak.zip"
 	@ls -lh $(DEPLOY_DIR)/PowerOffHook.pak.zip
+	@echo "Creating PowerOffHook.pakz..."
+	@mkdir -p pakz/Tools/$(DEVICE)/PowerOffHook.pak/bin
+	@mkdir -p pakz/.system/$(DEVICE)/bin
+	@cp $(BIN_DIR)/* pakz/Tools/$(DEVICE)/PowerOffHook.pak/bin/
+	@cp launch.sh pakz/Tools/$(DEVICE)/PowerOffHook.pak/
+	@cp settings.json pakz/Tools/$(DEVICE)/PowerOffHook.pak/
+	@cp pak.json pakz/Tools/$(DEVICE)/PowerOffHook.pak/
+	@cp README.md pakz/Tools/$(DEVICE)/PowerOffHook.pak/
+	@cp LICENSE pakz/Tools/$(DEVICE)/PowerOffHook.pak/
+	@cp $(BIN_DIR)/$(MODULE_NAME).ko pakz/.system/$(DEVICE)/bin/poweroff_next
+	@cd pakz && rm -f ../$(DEPLOY_DIR)/PowerOffHook.pakz
+	@cd pakz && zip -r ../$(DEPLOY_DIR)/PowerOffHook.pakz Tools/ .system/ -x "**/.DS_Store"
+	@echo "Pakz file created: $(DEPLOY_DIR)/PowerOffHook.pakz"
+	@ls -lh $(DEPLOY_DIR)/PowerOffHook.pakz
 
 # Deployment targets (require sshpass or manual password entry)
 
@@ -229,7 +244,7 @@ help:
 	@echo "Build Targets:"
 	@echo "  all            - Build the kernel module (default)"
 	@echo "  build          - Build the kernel module using Docker"
-	@echo "  deploy         - Build and create PowerOffHook.pak.zip package"
+	@echo "  deploy         - Build and create PowerOffHook.pak.zip and PowerOffHook.pakz packages"
 	@echo "  clean          - Remove build artifacts"
 	@echo "  distclean      - Remove build artifacts and dependencies"
 	@echo "  docker-build   - Build/check Docker cross-compilation image"
