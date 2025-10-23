@@ -118,7 +118,7 @@ clean:
 	@rm -f $(BIN_DIR)/jq $(BIN_DIR)/jq.LICENSE
 	@rm -f $(BIN_DIR)/minui-list $(BIN_DIR)/minui-presenter
 	@rm -rf $(DEPLOY_DIR)
-	@rm -rf pakz/Tools pakz/.system/$(DEVICE)
+	@rm -rf pakz/Tools
 	@echo "Clean complete."
 
 # Full clean including dependencies
@@ -156,17 +156,16 @@ deploy: build
 	@ls -lh $(DEPLOY_DIR)/PowerOffHook.pak.zip
 	@echo "Creating PowerOffHook.pakz..."
 	@mkdir -p pakz/Tools/$(DEVICE)/PowerOffHook.pak/bin
-	@mkdir -p pakz/.system/$(DEVICE)/bin
 	@cp $(BIN_DIR)/* pakz/Tools/$(DEVICE)/PowerOffHook.pak/bin/
 	@cp launch.sh pakz/Tools/$(DEVICE)/PowerOffHook.pak/
 	@cp settings.json pakz/Tools/$(DEVICE)/PowerOffHook.pak/
 	@cp pak.json pakz/Tools/$(DEVICE)/PowerOffHook.pak/
 	@cp README.md pakz/Tools/$(DEVICE)/PowerOffHook.pak/
 	@cp LICENSE pakz/Tools/$(DEVICE)/PowerOffHook.pak/
-	@cp $(BIN_DIR)/$(MODULE_NAME).ko pakz/.system/$(DEVICE)/bin/poweroff_next
 	@cd pakz && rm -f ../$(DEPLOY_DIR)/PowerOffHook.pakz
 	@cd pakz && zip -r ../$(DEPLOY_DIR)/PowerOffHook.pakz Tools/ .system/ -x "**/.DS_Store"
 	@echo "Pakz file created: $(DEPLOY_DIR)/PowerOffHook.pakz"
+	@rm -rf pakz/Tools
 	@ls -lh $(DEPLOY_DIR)/PowerOffHook.pakz
 
 # Deployment targets (require sshpass or manual password entry)
