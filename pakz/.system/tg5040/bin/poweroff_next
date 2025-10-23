@@ -40,7 +40,7 @@ if lsmod | grep -q "^poweroff_hook"; then
     #   5. Verify SD card unmount status
     #   6. Execute AXP2202 PMIC shutdown sequence
     #   7. Call kernel poweroff (standard shutdown)
-    sleep 10
+    sleep 15
 
     # Existing logic as a fallback
 fi
