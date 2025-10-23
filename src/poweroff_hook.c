@@ -45,6 +45,7 @@
 #include <linux/mount.h>
 #include <linux/path.h>
 #include <linux/namei.h>
+#include <linux/dcache.h>
 #include <linux/sched.h>
 #include <linux/swap.h>
 #include <linux/syscalls.h>
@@ -86,7 +87,7 @@ static int axp2202_write_reg(u8 reg, u8 value)
     int ret;
 
     if (!i2c_adapter) {
-        printk(KERN_EMERG "poweroff_hook: I2C adapter not initialized\n");
+        printk(KERN_INFO "poweroff_hook: I2C adapter not initialized\n");
         return -ENODEV;
     }
 
@@ -100,7 +101,7 @@ static int axp2202_write_reg(u8 reg, u8 value)
 
     ret = i2c_transfer(i2c_adapter, &msg, 1);
     if (ret != 1) {
-        printk(KERN_EMERG "poweroff_hook: I2C write failed: reg=0x%02x, ret=%d\n", reg, ret);
+        printk(KERN_INFO "poweroff_hook: I2C write failed: reg=0x%02x, ret=%d\n", reg, ret);
         return ret < 0 ? ret : -EIO;
     }
 
@@ -108,18 +109,18 @@ static int axp2202_write_reg(u8 reg, u8 value)
 }
 
 /*
- * Check if /mnt/SDCARD is mounted - use simple file open test
+ * Check if /mnt/SDCARD is mounted - properly test the mountpoint
  */
 static bool is_sdcard_mounted(void)
 {
-    struct file *filp;
-    
-    filp = filp_open("/mnt/SDCARD", O_RDONLY | O_DIRECTORY, 0);
-    if (IS_ERR(filp)) {
-        return false;
+    struct path p;
+    bool mounted = false;
+
+    if (kern_path("/mnt/SDCARD", LOOKUP_FOLLOW, &p) == 0) {
+        mounted = d_mountpoint(p.dentry);  /* true iff something is mounted ON this */
+        path_put(&p);
     }
-    filp_close(filp, NULL);
-    return true;
+    return mounted;
 }
 
 /*
@@ -172,7 +173,7 @@ static void write_debug_marker(const char *stage)
     }
     set_fs(old_fs);
     
-    printk(KERN_EMERG "poweroff_hook: DEBUG MARKER: %s\n", stage);
+    printk(KERN_INFO "poweroff_hook: DEBUG MARKER: %s\n", stage);
 }
 
 /*
@@ -209,25 +210,26 @@ static void unmount_filesystems(void)
     char *argv_sync[] = { "/bin/sync", NULL };
     char *argv_swapoff[] = { "/bin/swapoff", "-a", NULL };
     char *argv_umount_profile[] = { "/bin/umount", "-f", "/etc/profile", NULL };
-    char *argv_umount_sdcard[] = { "/bin/umount", "-f", "/mnt/SDCARD", NULL };
     char *envp[] = { "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL };
-    int retry;
+    int retry, ret;
     
     printk(KERN_INFO "poweroff_hook: Syncing all filesystems\n");
     write_debug_marker("UNMOUNT_SYNC_START");
-    call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: sync returned: %d\n", ret);
     msleep(100);
     write_debug_marker("UNMOUNT_SYNC_DONE");
     
     printk(KERN_INFO "poweroff_hook: Disabling swap\n");
     write_debug_marker("UNMOUNT_SWAPOFF_START");
-    /* Call swapoff -a via call_usermodehelper */
-    call_usermodehelper(argv_swapoff[0], argv_swapoff, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_swapoff[0], argv_swapoff, envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: swapoff returned: %d\n", ret);
     write_debug_marker("UNMOUNT_SWAPOFF_DONE");
     
     printk(KERN_INFO "poweroff_hook: Unmounting /etc/profile\n");
     write_debug_marker("UNMOUNT_PROFILE_START");
-    call_usermodehelper(argv_umount_profile[0], argv_umount_profile, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_umount_profile[0], argv_umount_profile, envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: umount /etc/profile returned: %d\n", ret);
     write_debug_marker("UNMOUNT_PROFILE_DONE");
     
     /* CRITICAL: Stop writing to SD card before unmounting it! */
@@ -238,7 +240,8 @@ static void unmount_filesystems(void)
     /* Extra sync to flush any pending writes to SD card */
     printk(KERN_INFO "poweroff_hook: Final SD card sync before unmount\n");
     write_debug_marker("UNMOUNT_SDCARD_PRE_SYNC");
-    call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: pre-unmount sync returned: %d\n", ret);
     msleep(500); /* Give extra time for writes to complete */
     write_debug_marker("UNMOUNT_SDCARD_PRE_SYNC_DONE");
     
@@ -256,12 +259,14 @@ static void unmount_filesystems(void)
         /* Kill any processes still using the SD card */
         if (retry > 0) {
             write_debug_marker("UNMOUNT_SDCARD_FUSER_KILL");
-            call_usermodehelper(argv_fuser[0], argv_fuser, envp, UMH_WAIT_PROC);
+            ret = call_usermodehelper(argv_fuser[0], argv_fuser, envp, UMH_WAIT_PROC);
+            printk(KERN_INFO "poweroff_hook: fuser returned: %d\n", ret);
             msleep(200);
         }
         
         /* Try force + lazy unmount together */
-        call_usermodehelper(argv_umount_force_lazy[0], argv_umount_force_lazy, envp, UMH_WAIT_PROC);
+        ret = call_usermodehelper(argv_umount_force_lazy[0], argv_umount_force_lazy, envp, UMH_WAIT_PROC);
+        printk(KERN_INFO "poweroff_hook: umount -f -l /mnt/SDCARD returned: %d\n", ret);
         
         write_debug_marker("UNMOUNT_SDCARD_WAIT_START");
         msleep(800); /* Wait longer for unmount to complete */
@@ -279,14 +284,16 @@ static void unmount_filesystems(void)
             printk(KERN_WARNING "poweroff_hook: SD card still mounted, retry %d/2\n", retry + 1);
             /* Force sync before next retry */
             write_debug_marker("UNMOUNT_SDCARD_RETRY_SYNC");
-            call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+            ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+            printk(KERN_INFO "poweroff_hook: retry sync returned: %d\n", ret);
             msleep(300);
         }
     }
     
     printk(KERN_INFO "poweroff_hook: Final sync\n");
     write_debug_marker("UNMOUNT_FINAL_SYNC_START");
-    call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: final sync returned: %d\n", ret);
     msleep(200);
     write_debug_marker("UNMOUNT_FINAL_SYNC_DONE");
 }
@@ -298,52 +305,52 @@ static void execute_axp2202_poweroff(void)
 {
     int i, ret;
 
-    printk(KERN_EMERG "poweroff_hook: ===== Starting AXP717/AXP2202 Clean Poweroff Sequence =====\n");
+    printk(KERN_INFO "poweroff_hook: ===== Starting AXP717/AXP2202 Clean Poweroff Sequence =====\n");
     write_debug_marker("PMIC_SEQUENCE_START");
 
     /* Step 1: Mask interrupts (registers 0x40-0x44 per datasheet) */
-    printk(KERN_EMERG "poweroff_hook: Step 1/4 - Masking interrupts (0x40-0x44)\n");
+    printk(KERN_INFO "poweroff_hook: Step 1/4 - Masking interrupts (0x40-0x44)\n");
     write_debug_marker("STEP1_MASK_INTERRUPTS");
     for (i = 0x40; i <= 0x44; i++) {
         ret = axp2202_write_reg(i, 0x00);
         if (ret < 0)
-            printk(KERN_EMERG "poweroff_hook: Failed to mask IRQ reg 0x%02x, error=%d\n", i, ret);
+            printk(KERN_INFO "poweroff_hook: Failed to mask IRQ reg 0x%02x, error=%d\n", i, ret);
     }
 
     /* Step 2: Clear interrupt status flags (registers 0x48-0x4C per datasheet) */
-    printk(KERN_EMERG "poweroff_hook: Step 2/4 - Clearing interrupt status (0x48-0x4C)\n");
+    printk(KERN_INFO "poweroff_hook: Step 2/4 - Clearing interrupt status (0x48-0x4C)\n");
     write_debug_marker("STEP2_CLEAR_IRQ_STATUS");
     for (i = 0x48; i <= 0x4C; i++) {
         ret = axp2202_write_reg(i, 0xFF);
         if (ret < 0)
-            printk(KERN_EMERG "poweroff_hook: Failed to clear IRQ status reg 0x%02x, error=%d\n", i, ret);
+            printk(KERN_INFO "poweroff_hook: Failed to clear IRQ status reg 0x%02x, error=%d\n", i, ret);
     }
 
     /* Step 3: Configure shutdown sources (0x22 = PWROFF_EN) */
     /* Bit 3: LDO Over-Current as poweroff source enable */
     /* Bit 1: PWRON > OFFLEVEL as poweroff source enable */
     /* Bit 0: Function select (0=poweroff, 1=restart) when button event occurs */
-    printk(KERN_EMERG "poweroff_hook: Step 3/4 - Configuring shutdown sources (0x22)\n");
+    printk(KERN_INFO "poweroff_hook: Step 3/4 - Configuring shutdown sources (0x22)\n");
     write_debug_marker("STEP3_SHUTDOWN_SOURCES");
     axp2202_write_reg(0x22, 0x0A);  /* 0b00001010 - set bits 1,3 only */
     msleep(50);
 
     /* Step 4: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
     /* This is the software poweroff command on AXP717/AXP2202 */
-    printk(KERN_EMERG "poweroff_hook: Step 4/4 - TRIGGERING SOFTWARE POWER-OFF (0x27)\n");
+    printk(KERN_INFO "poweroff_hook: Step 4/4 - TRIGGERING SOFTWARE POWER-OFF (0x27)\n");
     write_debug_marker("STEP4_TRIGGER_POWEROFF");
     ret = axp2202_write_reg(0x27, 0x01);
     if (ret < 0)
-        printk(KERN_EMERG "poweroff_hook: CRITICAL - PMIC poweroff trigger failed! error=%d\n", ret);
+        printk(KERN_INFO "poweroff_hook: CRITICAL - PMIC poweroff trigger failed! error=%d\n", ret);
     else
-        printk(KERN_EMERG "poweroff_hook: PMIC SOFTWARE POWER-OFF TRIGGERED (0x27=0x01)\n");
+        printk(KERN_INFO "poweroff_hook: PMIC SOFTWARE POWER-OFF TRIGGERED (0x27=0x01)\n");
     write_debug_marker("STEP4_COMPLETE");
     
     /* Power should cut almost immediately after this command.
      * If we reach here, give PMIC a moment to latch the shutdown. */
     msleep(1000);
 
-    printk(KERN_EMERG "poweroff_hook: ===== AXP717/AXP2202 Poweroff Sequence Complete =====\n");
+    printk(KERN_INFO "poweroff_hook: ===== AXP717/AXP2202 Poweroff Sequence Complete =====\n");
     write_debug_marker("PMIC_SEQUENCE_COMPLETE");
 }
 
@@ -374,7 +381,7 @@ static int monitor_thread_fn(void *data)
             filp_close(filp, NULL);
             
             write_debug_marker("SIGNAL_DETECTED");
-            printk(KERN_EMERG "poweroff_hook: *** SIGNAL FILE DETECTED! ***\n");
+            printk(KERN_INFO "poweroff_hook: *** SIGNAL FILE DETECTED! ***\n");
             
             /* Get timestamp for logging */
             getnstimeofday(&ts);
@@ -389,10 +396,10 @@ static int monitor_thread_fn(void *data)
             write_log(log_msg);
             write_debug_marker("BEFORE_KILL_PROCESSES");
             
-            printk(KERN_EMERG "poweroff_hook: ============================================\n");
-            printk(KERN_EMERG "poweroff_hook: PowerOff signal received from NextUI\n");
-            printk(KERN_EMERG "poweroff_hook: Beginning clean shutdown sequence\n");
-            printk(KERN_EMERG "poweroff_hook: ============================================\n");
+            printk(KERN_INFO "poweroff_hook: ============================================\n");
+            printk(KERN_INFO "poweroff_hook: PowerOff signal received from NextUI\n");
+            printk(KERN_INFO "poweroff_hook: Beginning clean shutdown sequence\n");
+            printk(KERN_INFO "poweroff_hook: ============================================\n");
 
             /* Step 1: Kill all user processes (but not kernel threads) */
             kill_all_processes();
@@ -410,12 +417,12 @@ static int monitor_thread_fn(void *data)
                 write_debug_marker("SD_STILL_MOUNTED_EMERGENCY");
                 
                 /* Skip PMIC shutdown and go straight to kernel poweroff for safety */
-                printk(KERN_EMERG "poweroff_hook: Calling kernel_power_off() (emergency path)\n");
+                printk(KERN_INFO "poweroff_hook: Calling kernel_power_off() (emergency path)\n");
                 write_debug_marker("EMERGENCY_KERNEL_POWEROFF");
                 kernel_power_off();
                 
                 /* Should never reach here */
-                printk(KERN_EMERG "poweroff_hook: kernel_power_off() returned, halting\n");
+                printk(KERN_INFO "poweroff_hook: kernel_power_off() returned, halting\n");
                 while (1) {
                     cpu_relax();
                 }
@@ -430,13 +437,13 @@ static int monitor_thread_fn(void *data)
             write_debug_marker("AFTER_PMIC_SHUTDOWN");
 
             /* Call kernel poweroff */
-            printk(KERN_EMERG "poweroff_hook: Calling kernel_power_off()\n");
+            printk(KERN_INFO "poweroff_hook: Calling kernel_power_off()\n");
             write_debug_marker("BEFORE_KERNEL_POWEROFF");
             kernel_power_off();
 
             /* Should never reach here */
             write_debug_marker("AFTER_KERNEL_POWEROFF");
-            printk(KERN_EMERG "poweroff_hook: kernel_power_off() returned, halting\n");
+            printk(KERN_INFO "poweroff_hook: kernel_power_off() returned, halting\n");
             while (1) {
                 cpu_relax();
             }
