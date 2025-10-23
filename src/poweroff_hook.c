@@ -12,19 +12,20 @@
  * 3. Kill all user processes (SIGTERM then SIGKILL)
  * 4. Unmount filesystems (swapoff, umount /etc/profile, umount /mnt/SDCARD)
  * 5. Verify SD card unmount status
- * 6. Execute AXP717/AXP2202 PMIC shutdown sequence
+ * 6. Execute AXP717/AXP2202 PMIC shutdown sequence (safe minimal version)
  * 7. Call kernel poweroff (standard shutdown)
  *
- * AXP717/AXP2202 REGISTER NOTES (per official datasheet v1.0):
- * - 0x25: Sleep and Wakeup configure (bit 5=IRQ wake, bit 1=SW wake, bit 0=sleep)
- * - 0x26: IRQLEVEL/OFFLEVEL/ONLEVEL timing (button press durations, NOT wake control)
- * - 0x27: Soft Poweroff configure (bit 0=1 triggers software poweroff)
- * - 0x28: Auto Sleep map0 (power rail control for sleep, NOT battery disconnect)
- * - 0x0B: module enable control1 (bit 2=Gauge enable)
- * - 0x19: module enable control2 (bit 3=Button Battery charge enable)
- * - 0x22: PWROFF_EN (bits 3,1,0 only - do NOT write 0xFF, sets reserved bits)
- * - 0x6A: Button battery charge termination voltage setting
- * - Note: AXP717/AXP2202 has NO software battery disconnect/ship-mode register
+ * AXP717/AXP2202 PMIC SHUTDOWN SEQUENCE (safe minimal version per datasheet v1.0):
+ * Step 1: Mask interrupts (0x40-0x44 = 0x00)
+ * Step 2: Clear interrupt status (0x48-0x4C = 0xFF)
+ * Step 3: Configure shutdown sources (0x22 = 0x0A, bits 1 and 3 only)
+ * Step 4: Trigger software poweroff (0x27 = 0x01)
+ *
+ * IMPORTANT NOTES:
+ * - IRQ enable registers: 0x40-0x44
+ * - IRQ status registers: 0x48-0x4C
+ * - 0x22 PWROFF_EN: only bits 0,1,3 are documented; never write 0xFF
+ * - 0x27 bit 0 = software poweroff trigger (documented in datasheet)
  *
  * Target: TrimUI Brick (kernel 4.9.191, aarch64, AXP717/AXP2202 PMIC on I2C bus 6)
  * License: GPL v2
@@ -52,10 +53,10 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("TrimUI Brick Power-Off Hook");
-MODULE_DESCRIPTION("AXP717/AXP2202 PMIC clean poweroff to prevent battery overheating");
-MODULE_VERSION("1.1");
+MODULE_DESCRIPTION("AXP717/AXP2202 PMIC clean poweroff (safe minimal version)");
+MODULE_VERSION("1.0");
 
-/* AXP717/AXP2202 PMIC I2C configuration */
+/* AXP717/AXP2202/AXP2202 PMIC I2C configuration */
 #define I2C_BUS_NUMBER 6
 #define AXP2202_I2C_ADDR 0x34
 
@@ -63,7 +64,7 @@ MODULE_VERSION("1.1");
 #define POWEROFF_SIGNAL_FILE "/tmp/poweroff"
 
 /* Log path (will only work before SD card unmount) */
-#define LOG_PATH "/mnt/SDCARD/.userdata/tg5040/logs/poweroff_hook.log"
+#define LOG_PATH "/mnt/SDCARD/.userdata/tg5040/logs/PowerOffHook-KernelModule.txt"
 
 /* Global I2C adapter for AXP717/AXP2202 communication */
 static struct i2c_adapter *i2c_adapter = NULL;
@@ -202,30 +203,65 @@ static void unmount_filesystems(void)
     char *argv_umount_profile[] = { "/bin/umount", "-f", "/etc/profile", NULL };
     char *argv_umount_sdcard[] = { "/bin/umount", "-l", "/mnt/SDCARD", NULL };
     char *envp[] = { "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL };
+    int retry;
     
     printk(KERN_INFO "poweroff_hook: Syncing all filesystems\n");
+    write_debug_marker("UNMOUNT_SYNC_START");
     call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
     msleep(100);
+    write_debug_marker("UNMOUNT_SYNC_DONE");
     
     printk(KERN_INFO "poweroff_hook: Disabling swap\n");
+    write_debug_marker("UNMOUNT_SWAPOFF_START");
     /* Call swapoff -a via call_usermodehelper */
     call_usermodehelper(argv_swapoff[0], argv_swapoff, envp, UMH_WAIT_PROC);
+    write_debug_marker("UNMOUNT_SWAPOFF_DONE");
     
     printk(KERN_INFO "poweroff_hook: Unmounting /etc/profile\n");
+    write_debug_marker("UNMOUNT_PROFILE_START");
     call_usermodehelper(argv_umount_profile[0], argv_umount_profile, envp, UMH_WAIT_PROC);
+    write_debug_marker("UNMOUNT_PROFILE_DONE");
     
-    printk(KERN_INFO "poweroff_hook: Unmounting /mnt/SDCARD\n");
-    call_usermodehelper(argv_umount_sdcard[0], argv_umount_sdcard, envp, UMH_WAIT_PROC);
-    
-    msleep(200);
+    /* Try to unmount SD card with retries */
+    printk(KERN_INFO "poweroff_hook: Unmounting /mnt/SDCARD (with retries)\n");
+    write_debug_marker("UNMOUNT_SDCARD_START");
+    for (retry = 0; retry < 5; retry++) {
+        char marker_msg[64];
+        snprintf(marker_msg, sizeof(marker_msg), "UNMOUNT_SDCARD_ATTEMPT_%d", retry + 1);
+        write_debug_marker(marker_msg);
+        
+        call_usermodehelper(argv_umount_sdcard[0], argv_umount_sdcard, envp, UMH_WAIT_PROC);
+        
+        write_debug_marker("UNMOUNT_SDCARD_WAIT_START");
+        msleep(500); /* Wait for unmount to complete */
+        write_debug_marker("UNMOUNT_SDCARD_WAIT_DONE");
+        
+        write_debug_marker("UNMOUNT_SDCARD_CHECK_START");
+        if (!is_sdcard_mounted()) {
+            printk(KERN_INFO "poweroff_hook: SD card unmounted successfully after %d attempts\n", retry + 1);
+            write_debug_marker("UNMOUNT_SDCARD_SUCCESS");
+            break;
+        }
+        write_debug_marker("UNMOUNT_SDCARD_STILL_MOUNTED");
+        
+        if (retry < 4) {
+            printk(KERN_WARNING "poweroff_hook: SD card still mounted, retry %d/4\n", retry + 1);
+            /* Force sync before next retry */
+            write_debug_marker("UNMOUNT_SDCARD_RETRY_SYNC");
+            call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+            msleep(200);
+        }
+    }
     
     printk(KERN_INFO "poweroff_hook: Final sync\n");
+    write_debug_marker("UNMOUNT_FINAL_SYNC_START");
     call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
     msleep(200);
+    write_debug_marker("UNMOUNT_FINAL_SYNC_DONE");
 }
 
 /*
- * Execute AXP717/AXP2202 PMIC clean poweroff sequence
+ * Execute AXP717/AXP2202 PMIC clean poweroff sequence (safe minimal version)
  */
 static void execute_axp2202_poweroff(void)
 {
@@ -234,69 +270,43 @@ static void execute_axp2202_poweroff(void)
     printk(KERN_EMERG "poweroff_hook: ===== Starting AXP717/AXP2202 Clean Poweroff Sequence =====\n");
     write_debug_marker("PMIC_SEQUENCE_START");
 
-    /* Step 1: Disable ALL interrupts (registers 0x40-0x47) */
-    printk(KERN_EMERG "poweroff_hook: Step 1/10 - Disabling all interrupts\n");
-    write_debug_marker("STEP1_DISABLE_INTERRUPTS");
-    for (i = 0x40; i <= 0x47; i++) {
+    /* Step 1: Mask interrupts (registers 0x40-0x44 per datasheet) */
+    printk(KERN_EMERG "poweroff_hook: Step 1/4 - Masking interrupts (0x40-0x44)\n");
+    write_debug_marker("STEP1_MASK_INTERRUPTS");
+    for (i = 0x40; i <= 0x44; i++) {
         ret = axp2202_write_reg(i, 0x00);
         if (ret < 0)
-            printk(KERN_EMERG "poweroff_hook: Failed to disable IRQ reg 0x%02x, error=%d\n", i, ret);
+            printk(KERN_EMERG "poweroff_hook: Failed to mask IRQ reg 0x%02x, error=%d\n", i, ret);
     }
 
-    /* Step 2: Clear ALL interrupt status flags (registers 0x48-0x4F) */
-    printk(KERN_EMERG "poweroff_hook: Step 2/10 - Clearing all interrupt status\n");
+    /* Step 2: Clear interrupt status flags (registers 0x48-0x4C per datasheet) */
+    printk(KERN_EMERG "poweroff_hook: Step 2/4 - Clearing interrupt status (0x48-0x4C)\n");
     write_debug_marker("STEP2_CLEAR_IRQ_STATUS");
-    for (i = 0x48; i <= 0x4F; i++) {
+    for (i = 0x48; i <= 0x4C; i++) {
         ret = axp2202_write_reg(i, 0xFF);
         if (ret < 0)
             printk(KERN_EMERG "poweroff_hook: Failed to clear IRQ status reg 0x%02x, error=%d\n", i, ret);
     }
 
-    /* Step 3: Disable wake/sleep functionality (0x25: Sleep and Wakeup configure) */
-    /* Bit 5: IRQ wake disable, Bit 1: Software wake disable, Bit 0: Sleep disable */
-    printk(KERN_EMERG "poweroff_hook: Step 3/7 - Disabling wake/sleep features\n");
-    write_debug_marker("STEP3_DISABLE_WAKE");
-    axp2202_write_reg(0x25, 0x00);
-
-    /* Step 4: Disable fuel gauge (0x0B bit 2 = Gauge enable) */
-    /* Read-modify-write to preserve other bits in module enable control1 */
-    printk(KERN_EMERG "poweroff_hook: Step 4/7 - Disabling fuel gauge\n");
-    write_debug_marker("STEP4_DISABLE_GAUGE");
-    /* Clear bit 2 of register 0x0B to disable gauge (safer to read-modify-write) */
-    /* For now, write 0x00 to disable all non-essential features in 0x0B */
-    axp2202_write_reg(0x0B, 0x00);
-    msleep(100);
-
-    /* Step 5: Disable backup/button battery charging (0x19 bit 3, 0x6A for voltage) */
-    /* Register 0x19 = module enable control2, bit 3 = Button Battery charge enable */
-    /* IMPORTANT: Preserve bit 0 (main battery charge enable) to allow charging while off */
-    printk(KERN_EMERG "poweroff_hook: Step 5/7 - Disabling backup battery (preserving main charge)\n");
-    write_debug_marker("STEP5_BACKUP_BATTERY");
-    /* Write 0x01 to keep bit 0 (battery charge) ON, disable bits 1-4 (boost, backup, LED) */
-    axp2202_write_reg(0x19, 0x01);  /* Keep main battery charging enabled! */
-    msleep(100);
-
-    /* Step 6: Configure shutdown sources (0x22 = PWROFF_EN) */
-    /* WARNING: Don't write 0xFF - sets reserved bits! */
-    /* Bit 3: LDO Over-Current poweroff enable */
-    /* Bit 1: PWRON > OFFLEVEL poweroff enable */
+    /* Step 3: Configure shutdown sources (0x22 = PWROFF_EN) */
+    /* Bit 3: LDO Over-Current as poweroff source enable */
+    /* Bit 1: PWRON > OFFLEVEL as poweroff source enable */
     /* Bit 0: Function select (0=poweroff, 1=restart) when button event occurs */
-    printk(KERN_EMERG "poweroff_hook: Step 6/7 - Configuring shutdown sources\n");
-    write_debug_marker("STEP6_SHUTDOWN_SOURCES");
-    /* Set bit 3 (LDO OC) and bit 1 (button OFFLEVEL), clear bit 0 for poweroff mode */
-    axp2202_write_reg(0x22, 0x0A);  /* 0b00001010 - only set documented bits */
+    printk(KERN_EMERG "poweroff_hook: Step 3/4 - Configuring shutdown sources (0x22)\n");
+    write_debug_marker("STEP3_SHUTDOWN_SOURCES");
+    axp2202_write_reg(0x22, 0x0A);  /* 0b00001010 - set bits 1,3 only */
     msleep(50);
 
-    /* Step 7: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
-    /* This is the ACTUAL power-off command on AXP717/AXP2202 (confirmed by working POC) */
-    printk(KERN_EMERG "poweroff_hook: Step 7/7 - TRIGGERING SOFTWARE POWER-OFF\n");
-    write_debug_marker("STEP7_TRIGGER_POWEROFF");
+    /* Step 4: TRIGGER SOFTWARE POWER-OFF (Register 0x27, bit 0 = 0x01) */
+    /* This is the software poweroff command on AXP717/AXP2202 */
+    printk(KERN_EMERG "poweroff_hook: Step 4/4 - TRIGGERING SOFTWARE POWER-OFF (0x27)\n");
+    write_debug_marker("STEP4_TRIGGER_POWEROFF");
     ret = axp2202_write_reg(0x27, 0x01);
     if (ret < 0)
         printk(KERN_EMERG "poweroff_hook: CRITICAL - PMIC poweroff trigger failed! error=%d\n", ret);
     else
         printk(KERN_EMERG "poweroff_hook: PMIC SOFTWARE POWER-OFF TRIGGERED (0x27=0x01)\n");
-    write_debug_marker("STEP7_COMPLETE");
+    write_debug_marker("STEP4_COMPLETE");
     
     /* Power should cut almost immediately after this command.
      * If we reach here, give PMIC a moment to latch the shutdown. */
@@ -341,8 +351,7 @@ static int monitor_thread_fn(void *data)
             
             snprintf(log_msg, sizeof(log_msg),
                      "=== PowerOff Signal Received ===\n"
-                     "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
-                     "Waiting for /mnt/SDCARD to unmount...\n",
+                     "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n",
                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                      tm.tm_hour, tm.tm_min, tm.tm_sec);
             
@@ -365,8 +374,20 @@ static int monitor_thread_fn(void *data)
             
             /* Verify SD card is unmounted */
             if (is_sdcard_mounted()) {
-                printk(KERN_WARNING "poweroff_hook: SD card still mounted after unmount attempt\n");
-                write_debug_marker("SD_STILL_MOUNTED");
+                printk(KERN_ERR "poweroff_hook: CRITICAL - SD card still mounted after 5 attempts!\n");
+                printk(KERN_ERR "poweroff_hook: Skipping PMIC sequence, calling kernel poweroff directly\n");
+                write_debug_marker("SD_STILL_MOUNTED_EMERGENCY");
+                
+                /* Skip PMIC shutdown and go straight to kernel poweroff for safety */
+                printk(KERN_EMERG "poweroff_hook: Calling kernel_power_off() (emergency path)\n");
+                write_debug_marker("EMERGENCY_KERNEL_POWEROFF");
+                kernel_power_off();
+                
+                /* Should never reach here */
+                printk(KERN_EMERG "poweroff_hook: kernel_power_off() returned, halting\n");
+                while (1) {
+                    cpu_relax();
+                }
             } else {
                 printk(KERN_INFO "poweroff_hook: SD card successfully unmounted\n");
                 write_debug_marker("SD_UNMOUNTED_OK");
@@ -410,10 +431,10 @@ static int __init poweroff_hook_init(void)
     struct tm tm;
 
     printk(KERN_INFO "poweroff_hook: ============================================\n");
-    printk(KERN_INFO "poweroff_hook: TrimUI Brick AXP717/AXP2202 Clean Poweroff Module v1.1\n");
+    printk(KERN_INFO "poweroff_hook: TrimUI Brick AXP717/AXP2202 Poweroff Module v1.0 (safe)\n");
     printk(KERN_INFO "poweroff_hook: ============================================\n");
     printk(KERN_INFO "poweroff_hook: Target kernel: %s\n", UTS_RELEASE);
-    printk(KERN_INFO "poweroff_hook: Purpose: Prevent battery overheating on shutdown\n");
+    printk(KERN_INFO "poweroff_hook: Purpose: Clean AXP717/AXP2202 PMIC shutdown sequence\n");
 
     /* Get I2C adapter for AXP717/AXP2202 communication */
     i2c_adapter = i2c_get_adapter(I2C_BUS_NUMBER);
@@ -453,9 +474,9 @@ static int __init poweroff_hook_init(void)
     snprintf(log_msg, sizeof(log_msg),
              "=== PowerOff Hook Module LOADED ===\n"
              "Timestamp: %04ld-%02d-%02d %02d:%02d:%02d UTC\n"
-             "Version: 1.1\n"
+             "Version: 1.0 (safe minimal version)\n"
              "Mode: Signal-based with SD card unmount detection\n"
-             "PMIC: AXP717/AXP2202 (registers corrected per datasheet v1.0)\n"
+             "PMIC: AXP717/AXP2202 (minimal safe registers per datasheet v1.0)\n"
              "Signal file: %s\n"
              "I2C Bus: %d, PMIC Address: 0x%02x\n\n",
              tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
@@ -491,10 +512,18 @@ static int __init poweroff_hook_init(void)
                 vfs_fsync(dst_filp, 1);
                 filp_close(dst_filp, NULL);
                 printk(KERN_INFO "poweroff_hook: Appended content from /root/poweroff_hook.log to main log\n");
+                
+                /* Clear the source file after successful append */
+                filp_close(src_filp, NULL);
+                src_filp = filp_open("/root/poweroff_hook.log", O_WRONLY | O_TRUNC, 0644);
+                if (!IS_ERR(src_filp)) {
+                    filp_close(src_filp, NULL);
+                    printk(KERN_INFO "poweroff_hook: Cleared /root/poweroff_hook.log after append\n");
+                }
             } else {
                 printk(KERN_WARNING "poweroff_hook: Could not open destination log file for appending\n");
+                filp_close(src_filp, NULL);
             }
-            filp_close(src_filp, NULL);
         } else {
             printk(KERN_INFO "poweroff_hook: No /root/poweroff_hook.log file found to append\n");
         }
