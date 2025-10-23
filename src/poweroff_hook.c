@@ -73,6 +73,9 @@ static struct i2c_adapter *i2c_adapter = NULL;
 static struct task_struct *monitor_thread = NULL;
 static bool should_stop = false;
 
+/* Flag to disable SD card logging during unmount */
+static bool sd_logging_enabled = true;
+
 /*
  * I2C register write to AXP717/AXP2202 PMIC
  */
@@ -127,6 +130,11 @@ static void write_log(const char *message)
     struct file *filp;
     mm_segment_t old_fs;
     loff_t pos = 0;
+
+    /* Don't write to SD card if logging is disabled (during unmount) */
+    if (!sd_logging_enabled) {
+        return;
+    }
 
     filp = filp_open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (IS_ERR(filp)) {
@@ -201,7 +209,7 @@ static void unmount_filesystems(void)
     char *argv_sync[] = { "/bin/sync", NULL };
     char *argv_swapoff[] = { "/bin/swapoff", "-a", NULL };
     char *argv_umount_profile[] = { "/bin/umount", "-f", "/etc/profile", NULL };
-    char *argv_umount_sdcard[] = { "/bin/umount", "-l", "/mnt/SDCARD", NULL };
+    char *argv_umount_sdcard[] = { "/bin/umount", "-f", "/mnt/SDCARD", NULL };
     char *envp[] = { "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL };
     int retry;
     
@@ -222,18 +230,41 @@ static void unmount_filesystems(void)
     call_usermodehelper(argv_umount_profile[0], argv_umount_profile, envp, UMH_WAIT_PROC);
     write_debug_marker("UNMOUNT_PROFILE_DONE");
     
-    /* Try to unmount SD card with retries */
+    /* CRITICAL: Stop writing to SD card before unmounting it! */
+    printk(KERN_INFO "poweroff_hook: Disabling SD card logging\n");
+    write_debug_marker("UNMOUNT_DISABLE_SD_LOGGING");
+    sd_logging_enabled = false;
+    
+    /* Extra sync to flush any pending writes to SD card */
+    printk(KERN_INFO "poweroff_hook: Final SD card sync before unmount\n");
+    write_debug_marker("UNMOUNT_SDCARD_PRE_SYNC");
+    call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    msleep(500); /* Give extra time for writes to complete */
+    write_debug_marker("UNMOUNT_SDCARD_PRE_SYNC_DONE");
+    
+    /* Try to unmount SD card with retries - using -f (force) then -l (lazy) */
     printk(KERN_INFO "poweroff_hook: Unmounting /mnt/SDCARD (with retries)\n");
     write_debug_marker("UNMOUNT_SDCARD_START");
-    for (retry = 0; retry < 5; retry++) {
+    for (retry = 0; retry < 3; retry++) {
         char marker_msg[64];
+        char *argv_fuser[] = { "/usr/bin/fuser", "-km", "/mnt/SDCARD", NULL };
+        char *argv_umount_force_lazy[] = { "/bin/umount", "-f", "-l", "/mnt/SDCARD", NULL };
+        
         snprintf(marker_msg, sizeof(marker_msg), "UNMOUNT_SDCARD_ATTEMPT_%d", retry + 1);
         write_debug_marker(marker_msg);
         
-        call_usermodehelper(argv_umount_sdcard[0], argv_umount_sdcard, envp, UMH_WAIT_PROC);
+        /* Kill any processes still using the SD card */
+        if (retry > 0) {
+            write_debug_marker("UNMOUNT_SDCARD_FUSER_KILL");
+            call_usermodehelper(argv_fuser[0], argv_fuser, envp, UMH_WAIT_PROC);
+            msleep(200);
+        }
+        
+        /* Try force + lazy unmount together */
+        call_usermodehelper(argv_umount_force_lazy[0], argv_umount_force_lazy, envp, UMH_WAIT_PROC);
         
         write_debug_marker("UNMOUNT_SDCARD_WAIT_START");
-        msleep(500); /* Wait for unmount to complete */
+        msleep(800); /* Wait longer for unmount to complete */
         write_debug_marker("UNMOUNT_SDCARD_WAIT_DONE");
         
         write_debug_marker("UNMOUNT_SDCARD_CHECK_START");
@@ -244,12 +275,12 @@ static void unmount_filesystems(void)
         }
         write_debug_marker("UNMOUNT_SDCARD_STILL_MOUNTED");
         
-        if (retry < 4) {
-            printk(KERN_WARNING "poweroff_hook: SD card still mounted, retry %d/4\n", retry + 1);
+        if (retry < 2) {
+            printk(KERN_WARNING "poweroff_hook: SD card still mounted, retry %d/2\n", retry + 1);
             /* Force sync before next retry */
             write_debug_marker("UNMOUNT_SDCARD_RETRY_SYNC");
             call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
-            msleep(200);
+            msleep(300);
         }
     }
     
