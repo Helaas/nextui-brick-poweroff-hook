@@ -1,5 +1,9 @@
 # PowerOff Hook for NextUI — Kernel Module for shutting down the TrimUI Brick safely
 
+> ⚠️ **Warning (Testing Only)**  
+> This kernel module is **still under active testing**. It’s best if **non-technical users do not install it yet**.  
+> Please **don’t grab this early release and then complain on Reddit** — feedback from testers is welcome, but this is not a stable release.
+
 ## Overview
 
 The **PowerOff Hook** is a kernel module that ensures proper and safe shutdown of the TrimUI Brick’s AXP2202 Power Management IC (PMIC).  
