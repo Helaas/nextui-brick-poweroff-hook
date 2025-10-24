@@ -1,4 +1,4 @@
-# PowerOff Hook v1.0 — Kernel Module for shutting down the TrimUI Brick safely
+# PowerOff Hook for NextUI — Kernel Module for shutting down the TrimUI Brick safely
 
 ## Overview
 
