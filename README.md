@@ -1,8 +1,7 @@
 # PowerOff Hook for NextUI — Kernel Module for shutting down the TrimUI Brick safely
 
-> ⚠️ **Warning (Testing Only)**  
-> This kernel module is **still under active testing**. It’s best if **non-technical users do not install it yet**.  
-> Please **don’t grab this early release and then complain on Reddit** — feedback from testers is welcome, but this is not a stable release.
+> ⚠️ **Warning**  
+> This kernel module is **still under active testing**. It’s best if **non-technical users** make a full backup or use a spare SD card to try this out.
 
 ## Overview
 
