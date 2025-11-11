@@ -77,6 +77,13 @@ static bool should_stop = false;
 /* Flag to disable SD card logging during unmount */
 static bool sd_logging_enabled = true;
 
+/* Reusable environment for usermode helper invocations */
+static char *usermode_envp[] = {
+    "HOME=/",
+    "PATH=/sbin:/bin:/usr/sbin:/usr/bin",
+    NULL
+};
+
 /*
  * I2C register write to AXP717/AXP2202 PMIC
  */
@@ -182,24 +189,48 @@ static void write_debug_marker(const char *stage)
  */
 static void kill_all_processes(void)
 {
-    char *argv_killall5_term[] = { "/bin/killall5", "-15", NULL };
-    char *argv_killall5_kill[] = { "/bin/killall5", "-9", NULL };
-    char *envp[] = { "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL };
-    
+    char *argv_kill_term[] = { "/bin/busybox", "kill", "-TERM", "-1", NULL };
+    char *argv_kill_kill[] = { "/bin/busybox", "kill", "-KILL", "-1", NULL };
+    int ret;
+
     printk(KERN_INFO "poweroff_hook: Starting graceful process termination (SIGTERM)\n");
-    
+
     /* First pass: Send SIGTERM for graceful shutdown */
-    call_usermodehelper(argv_killall5_term[0], argv_killall5_term, envp, UMH_WAIT_PROC);
-    
+    ret = call_usermodehelper(argv_kill_term[0], argv_kill_term, usermode_envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: busybox kill -TERM -1 returned: %d\n", ret);
+
     printk(KERN_INFO "poweroff_hook: Sent SIGTERM to all processes, waiting 500ms\n");
     msleep(500);  /* Give processes time to exit gracefully */
-    
+
     /* Second pass: Force kill with SIGKILL */
     printk(KERN_INFO "poweroff_hook: Force killing remaining processes (SIGKILL)\n");
-    call_usermodehelper(argv_killall5_kill[0], argv_killall5_kill, envp, UMH_WAIT_PROC);
-    
+    ret = call_usermodehelper(argv_kill_kill[0], argv_kill_kill, usermode_envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: busybox kill -KILL -1 returned: %d\n", ret);
+
     printk(KERN_INFO "poweroff_hook: Process termination complete\n");
     msleep(200);  /* Brief wait for processes to die */
+}
+
+/*
+ * Kill any processes that still hold files on /mnt/SDCARD by inspecting /proc/<pid>/fd
+ */
+static void kill_sdcard_users(void)
+{
+    static char kill_script[] =
+        "for pid_path in /proc/[0-9]*; do "
+            "pid=${pid_path#/proc/}; "
+            "[ \"$pid\" -le 1 ] && continue; "
+            "for fd in \"$pid_path\"/fd/*; do "
+                "[ -e \"$fd\" ] || continue; "
+                "target=$(readlink \"$fd\" 2>/dev/null) || continue; "
+                "case \"$target\" in /mnt/SDCARD*) /bin/busybox kill -9 \"$pid\" 2>/dev/null; continue 2 ;; esac; "
+            "done; "
+        "done";
+    char *argv_kill_sdcard[] = { "/bin/sh", "-c", kill_script, NULL };
+    int ret;
+
+    ret = call_usermodehelper(argv_kill_sdcard[0], argv_kill_sdcard, usermode_envp, UMH_WAIT_PROC);
+    printk(KERN_INFO "poweroff_hook: procfd kill script returned: %d\n", ret);
 }
 
 /*
@@ -208,27 +239,26 @@ static void kill_all_processes(void)
 static void unmount_filesystems(void)
 {
     char *argv_sync[] = { "/bin/sync", NULL };
-    char *argv_swapoff[] = { "/bin/swapoff", "-a", NULL };
+    char *argv_swapoff[] = { "/usr/sbin/swapoff", "-a", NULL };
     char *argv_umount_profile[] = { "/bin/umount", "-f", "/etc/profile", NULL };
-    char *envp[] = { "HOME=/", "PATH=/sbin:/bin:/usr/sbin:/usr/bin", NULL };
     int retry, ret;
     
     printk(KERN_INFO "poweroff_hook: Syncing all filesystems\n");
     write_debug_marker("UNMOUNT_SYNC_START");
-    ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_sync[0], argv_sync, usermode_envp, UMH_WAIT_PROC);
     printk(KERN_INFO "poweroff_hook: sync returned: %d\n", ret);
     msleep(100);
     write_debug_marker("UNMOUNT_SYNC_DONE");
     
     printk(KERN_INFO "poweroff_hook: Disabling swap\n");
     write_debug_marker("UNMOUNT_SWAPOFF_START");
-    ret = call_usermodehelper(argv_swapoff[0], argv_swapoff, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_swapoff[0], argv_swapoff, usermode_envp, UMH_WAIT_PROC);
     printk(KERN_INFO "poweroff_hook: swapoff returned: %d\n", ret);
     write_debug_marker("UNMOUNT_SWAPOFF_DONE");
     
     printk(KERN_INFO "poweroff_hook: Unmounting /etc/profile\n");
     write_debug_marker("UNMOUNT_PROFILE_START");
-    ret = call_usermodehelper(argv_umount_profile[0], argv_umount_profile, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_umount_profile[0], argv_umount_profile, usermode_envp, UMH_WAIT_PROC);
     printk(KERN_INFO "poweroff_hook: umount /etc/profile returned: %d\n", ret);
     write_debug_marker("UNMOUNT_PROFILE_DONE");
     
@@ -240,7 +270,7 @@ static void unmount_filesystems(void)
     /* Extra sync to flush any pending writes to SD card */
     printk(KERN_INFO "poweroff_hook: Final SD card sync before unmount\n");
     write_debug_marker("UNMOUNT_SDCARD_PRE_SYNC");
-    ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_sync[0], argv_sync, usermode_envp, UMH_WAIT_PROC);
     printk(KERN_INFO "poweroff_hook: pre-unmount sync returned: %d\n", ret);
     msleep(500); /* Give extra time for writes to complete */
     write_debug_marker("UNMOUNT_SDCARD_PRE_SYNC_DONE");
@@ -250,7 +280,6 @@ static void unmount_filesystems(void)
     write_debug_marker("UNMOUNT_SDCARD_START");
     for (retry = 0; retry < 3; retry++) {
         char marker_msg[64];
-        char *argv_fuser[] = { "/usr/bin/fuser", "-km", "/mnt/SDCARD", NULL };
         char *argv_umount_force_lazy[] = { "/bin/umount", "-f", "-l", "/mnt/SDCARD", NULL };
         
         snprintf(marker_msg, sizeof(marker_msg), "UNMOUNT_SDCARD_ATTEMPT_%d", retry + 1);
@@ -258,14 +287,13 @@ static void unmount_filesystems(void)
         
         /* Kill any processes still using the SD card */
         if (retry > 0) {
-            write_debug_marker("UNMOUNT_SDCARD_FUSER_KILL");
-            ret = call_usermodehelper(argv_fuser[0], argv_fuser, envp, UMH_WAIT_PROC);
-            printk(KERN_INFO "poweroff_hook: fuser returned: %d\n", ret);
+            write_debug_marker("UNMOUNT_SDCARD_LSOF_KILL");
+            kill_sdcard_users();
             msleep(200);
         }
-        
+
         /* Try force + lazy unmount together */
-        ret = call_usermodehelper(argv_umount_force_lazy[0], argv_umount_force_lazy, envp, UMH_WAIT_PROC);
+        ret = call_usermodehelper(argv_umount_force_lazy[0], argv_umount_force_lazy, usermode_envp, UMH_WAIT_PROC);
         printk(KERN_INFO "poweroff_hook: umount -f -l /mnt/SDCARD returned: %d\n", ret);
         
         write_debug_marker("UNMOUNT_SDCARD_WAIT_START");
@@ -284,7 +312,7 @@ static void unmount_filesystems(void)
             printk(KERN_WARNING "poweroff_hook: SD card still mounted, retry %d/2\n", retry + 1);
             /* Force sync before next retry */
             write_debug_marker("UNMOUNT_SDCARD_RETRY_SYNC");
-            ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+            ret = call_usermodehelper(argv_sync[0], argv_sync, usermode_envp, UMH_WAIT_PROC);
             printk(KERN_INFO "poweroff_hook: retry sync returned: %d\n", ret);
             msleep(300);
         }
@@ -292,7 +320,7 @@ static void unmount_filesystems(void)
     
     printk(KERN_INFO "poweroff_hook: Final sync\n");
     write_debug_marker("UNMOUNT_FINAL_SYNC_START");
-    ret = call_usermodehelper(argv_sync[0], argv_sync, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv_sync[0], argv_sync, usermode_envp, UMH_WAIT_PROC);
     printk(KERN_INFO "poweroff_hook: final sync returned: %d\n", ret);
     msleep(200);
     write_debug_marker("UNMOUNT_FINAL_SYNC_DONE");
