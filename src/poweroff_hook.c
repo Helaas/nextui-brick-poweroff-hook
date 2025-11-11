@@ -12,8 +12,9 @@
  * 3. Kill all user processes that use the SD card 
  * 4. Unmount filesystems (swapoff, umount /etc/profile, umount /mnt/SDCARD)
  * 5. Verify SD card unmount status
- * 6. Execute AXP717/AXP2202 PMIC shutdown sequence (safe minimal version)
- * 7. Call kernel poweroff (standard shutdown)
+ * 6. Kill all user processes (SIGTERM then SIGKILL)
+ * 7. Execute AXP717/AXP2202 PMIC shutdown sequence (safe minimal version)
+ * 8. Call kernel poweroff (standard shutdown)
  *
  * AXP717/AXP2202 PMIC SHUTDOWN SEQUENCE (safe minimal version per datasheet v1.0):
  * Step 1: Mask interrupts (0x40-0x44 = 0x00)
@@ -425,7 +426,7 @@ static int monitor_thread_fn(void *data)
             
             write_log(log_msg);
             write_debug_marker("BEFORE_KILL_SDCARD_PROCESSES");
-            msleep(3000);
+            msleep(500);
             printk(KERN_INFO "poweroff_hook: ============================================\n");
             printk(KERN_INFO "poweroff_hook: PowerOff signal received from NextUI\n");
             printk(KERN_INFO "poweroff_hook: Beginning clean shutdown sequence\n");
@@ -449,7 +450,7 @@ static int monitor_thread_fn(void *data)
                 /* Skip PMIC shutdown and go straight to kernel poweroff for safety */
                 printk(KERN_INFO "poweroff_hook: Calling kernel_power_off() (emergency path)\n");
                 write_debug_marker("EMERGENCY_KERNEL_POWEROFF");
-                msleep(5000);
+                msleep(500);
                 kill_all_processes();
                 kernel_power_off();
                 
@@ -463,14 +464,14 @@ static int monitor_thread_fn(void *data)
                 write_debug_marker("SD_UNMOUNTED_OK");
             }
 
-            ///* Step 3: Kill all user processes (but not kernel threads) */
-            //write_debug_marker("BEFORE_KILL_ALL_PROCESSES");
-            //kill_all_processes();
-            //write_debug_marker("AFTER_KILL_ALL_PROCESSES");
+            /* Step 3: Kill all user processes (but not kernel threads) */
+            write_debug_marker("BEFORE_KILL_ALL_PROCESSES");
+            kill_all_processes();
+            write_debug_marker("AFTER_KILL_ALL_PROCESSES");
 
             /* Step 4: Execute PMIC shutdown sequence */
             write_debug_marker("BEFORE_PMIC_SHUTDOWN");
-            msleep(5000);
+            msleep(500);
             execute_axp2202_poweroff();
             write_debug_marker("AFTER_PMIC_SHUTDOWN");
             
