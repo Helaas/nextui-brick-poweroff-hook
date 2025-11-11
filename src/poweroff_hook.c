@@ -331,6 +331,7 @@ static void unmount_filesystems(void)
  */
 static void execute_axp2202_poweroff(void)
 {
+    return;
     int i, ret;
 
     printk(KERN_INFO "poweroff_hook: ===== Starting AXP717/AXP2202 Clean Poweroff Sequence =====\n");
@@ -423,14 +424,14 @@ static int monitor_thread_fn(void *data)
             
             write_log(log_msg);
             write_debug_marker("BEFORE_KILL_PROCESSES");
-            
+            msleep(3000);
             printk(KERN_INFO "poweroff_hook: ============================================\n");
             printk(KERN_INFO "poweroff_hook: PowerOff signal received from NextUI\n");
             printk(KERN_INFO "poweroff_hook: Beginning clean shutdown sequence\n");
             printk(KERN_INFO "poweroff_hook: ============================================\n");
 
-            /* Step 1: Kill all user processes (but not kernel threads) */
-            kill_all_processes();
+            /* Step 1: Kill all processes that use the SD card */
+            kill_sdcard_users();
             write_debug_marker("AFTER_KILL_PROCESSES");
             
             /* Step 2: Disable swap and unmount filesystems */
@@ -459,7 +460,10 @@ static int monitor_thread_fn(void *data)
                 write_debug_marker("SD_UNMOUNTED_OK");
             }
 
-            /* Step 3: Execute PMIC shutdown sequence */
+            /* Step 3: Kill all user processes (but not kernel threads) */
+            kill_all_processes();
+
+            /* Step 4: Execute PMIC shutdown sequence */
             write_debug_marker("BEFORE_PMIC_SHUTDOWN");
             execute_axp2202_poweroff();
             write_debug_marker("AFTER_PMIC_SHUTDOWN");
