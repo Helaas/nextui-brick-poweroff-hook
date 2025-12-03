@@ -1,7 +1,14 @@
 # PowerOff Hook for NextUI — Kernel Module for shutting down the TrimUI Brick safely
 
+> ℹ️ **Project Status Update**  
+> Thank you to all testers who helped validate this project! The PowerOff Hook logic has been incorporated into:
+> - **MinUI** starting from release [MinUI-20251123-1](https://github.com/shauninman/MinUI/releases)
+> - **NextUI** starting from release [v6.6.0](https://github.com/LoveRetro/NextUI/releases/)
+>
+> Since [PakUI](https://github.com/tenlevels/PakUI) is installed on top of MinUI, PakUI users can simply drag `MinUI.zip` onto their SD card and power on their machine again for installation to get PowerOff Protection.
+
 > ⚠️ **Warning**  
-> This kernel module is **still under active testing**. It’s best if **non-technical users** make a full backup or use a spare SD card to try this out.
+> This kernel module is **still under active testing**. It's best if **non-technical users** make a full backup or use a spare SD card to try this out.
 
 ## Overview
 
