@@ -4,11 +4,11 @@
 > Thank you to all testers who helped validate this project! The PowerOff Hook logic has been incorporated into:
 > - **MinUI** starting from release [MinUI-20251123-1](https://github.com/shauninman/MinUI/releases)
 > - **NextUI** starting from release [v6.6.0](https://github.com/LoveRetro/NextUI/releases/)
->
-> Since [PakUI](https://github.com/tenlevels/PakUI) is installed on top of MinUI, PakUI users can simply drag `MinUI.zip` onto their SD card and power on their machine again for installation to get PowerOff Protection.
+> - **PakUI** starting from release [v1.3.2](https://github.com/tenlevels/PakUI/releases/)
 
 > ⚠️ **Warning**  
-> This kernel module is **still under active testing**. It's best if **non-technical users** make a full backup or use a spare SD card to try this out.
+> Testing for this kernel module is *concluded*. It's best that you **uninstall** it, and update your launcher to at least the versions listed above.
+> To safely uninstall, disable the hook from the Tools menu (set both options to Off). After that you can delete the PowerOffHook.pak folder from the tools folder.
 
 ## Overview
 
